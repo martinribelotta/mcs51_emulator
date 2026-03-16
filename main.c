@@ -62,7 +62,13 @@ int main(int argc, char **argv)
     cpu_run(&cpu, max_steps);
 
     if (cpu.halted) {
-        printf("CPU halted at PC=0x%04X (opcode 0x%02X)\n", cpu.pc, cpu.last_opcode);
+        if (cpu.halt_reason) {
+            printf("CPU halted at PC=0x%04X (opcode 0x%02X): %s\n",
+                   cpu.pc, cpu.last_opcode, cpu.halt_reason);
+        } else {
+            printf("CPU halted at PC=0x%04X (opcode 0x%02X)\n",
+                   cpu.pc, cpu.last_opcode);
+        }
     } else {
         printf("CPU stopped after %llu steps at PC=0x%04X\n",
                (unsigned long long)max_steps, cpu.pc);

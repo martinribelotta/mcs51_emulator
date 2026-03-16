@@ -141,6 +141,7 @@ void cpu_reset(cpu_t *cpu)
     cpu->pc = 0;
     cpu->halted = false;
     cpu->last_opcode = 0x00;
+    cpu->halt_reason = NULL;
     cpu->trace_enabled = false;
     cpu->trace_fn = NULL;
     cpu->trace_user = NULL;
@@ -264,6 +265,7 @@ bool cpu_step(cpu_t *cpu)
     instr_desc_t desc = decode(opcode);
     if (desc.mnemonic == MN_INVALID) {
         cpu->halted = true;
+        cpu->halt_reason = "UNDEFINED";
         return false;
     }
 
@@ -354,6 +356,21 @@ bool cpu_step(cpu_t *cpu)
         break;
     case MN_DIV:
         exec_div(cpu);
+        break;
+    case MN_RR:
+        exec_rr(cpu);
+        break;
+    case MN_RRC:
+        exec_rrc(cpu);
+        break;
+    case MN_RL:
+        exec_rl(cpu);
+        break;
+    case MN_RLC:
+        exec_rlc(cpu);
+        break;
+    case MN_SWAP:
+        exec_swap(cpu);
         break;
     case MN_INC:
         exec_inc(cpu, dst);

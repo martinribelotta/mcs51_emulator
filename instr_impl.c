@@ -118,6 +118,39 @@ void exec_div(cpu_t *cpu)
     cpu_set_carry(cpu, false);
 }
 
+void exec_rr(cpu_t *cpu)
+{
+    uint8_t acc = cpu->acc;
+    cpu->acc = (uint8_t)((acc >> 1) | (acc << 7));
+}
+
+void exec_rrc(cpu_t *cpu)
+{
+    uint8_t acc = cpu->acc;
+    uint8_t cy = cpu_get_carry(cpu) ? 1u : 0u;
+    cpu_set_carry(cpu, (acc & 0x01) != 0);
+    cpu->acc = (uint8_t)((acc >> 1) | (cy << 7));
+}
+
+void exec_rl(cpu_t *cpu)
+{
+    uint8_t acc = cpu->acc;
+    cpu->acc = (uint8_t)((acc << 1) | (acc >> 7));
+}
+
+void exec_rlc(cpu_t *cpu)
+{
+    uint8_t acc = cpu->acc;
+    uint8_t cy = cpu_get_carry(cpu) ? 1u : 0u;
+    cpu_set_carry(cpu, (acc & 0x80) != 0);
+    cpu->acc = (uint8_t)((acc << 1) | cy);
+}
+
+void exec_swap(cpu_t *cpu)
+{
+    cpu->acc = (uint8_t)((cpu->acc << 4) | (cpu->acc >> 4));
+}
+
 void exec_inc(cpu_t *cpu, op_t dst)
 {
     if (dst.mode == AM_DPTR) {

@@ -42,6 +42,7 @@ struct cpu {
 
     bool halted;
     uint8_t last_opcode;
+    const char *halt_reason;
 
     bool trace_enabled;
     cpu_trace_fn trace_fn;
