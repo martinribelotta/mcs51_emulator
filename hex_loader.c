@@ -1,8 +1,9 @@
-#include "cpu.h"
+#include "hex_loader.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <stdlib.h>
 
 static int hex_value(char c)
 {
@@ -29,13 +30,8 @@ static bool parse_hex_byte(const char *s, uint8_t *out)
     return true;
 }
 
-bool hex_load_file(cpu_t *cpu, const char *path)
+static bool hex_load_stream(FILE *fp, cpu_t *cpu)
 {
-    FILE *fp = fopen(path, "r");
-    if (!fp) {
-        return false;
-    }
-
     char line[1024];
     uint32_t base = 0;
 
@@ -48,7 +44,6 @@ bool hex_load_file(cpu_t *cpu, const char *path)
             continue;
         }
         if (line[0] != ':') {
-            fclose(fp);
             return false;
         }
 
@@ -61,7 +56,6 @@ bool hex_load_file(cpu_t *cpu, const char *path)
             !parse_hex_byte(&line[3], &addr_hi) ||
             !parse_hex_byte(&line[5], &addr_lo) ||
             !parse_hex_byte(&line[7], &type)) {
-            fclose(fp);
             return false;
         }
 
@@ -71,13 +65,10 @@ bool hex_load_file(cpu_t *cpu, const char *path)
             for (uint8_t i = 0; i < count; ++i) {
                 uint8_t data = 0;
                 if (!parse_hex_byte(&line[9 + (i * 2)], &data)) {
-                    fclose(fp);
                     return false;
                 }
                 uint32_t target = base + addr + i;
-                if (target < sizeof(cpu->code)) {
-                    cpu->code[target] = data;
-                }
+                cpu_code_write(cpu, (uint16_t)target, data);
             }
         } else if (type == 0x01) {
             break;
@@ -85,7 +76,6 @@ bool hex_load_file(cpu_t *cpu, const char *path)
             uint8_t hi = 0;
             uint8_t lo = 0;
             if (!parse_hex_byte(&line[9], &hi) || !parse_hex_byte(&line[11], &lo)) {
-                fclose(fp);
                 return false;
             }
             base = (uint32_t)((hi << 8) | lo) << 16;
@@ -94,6 +84,107 @@ bool hex_load_file(cpu_t *cpu, const char *path)
         }
     }
 
-    fclose(fp);
     return true;
+}
+
+bool hex_load_file(cpu_t *cpu, const char *path)
+{
+    FILE *fp = fopen(path, "r");
+    if (!fp) {
+        return false;
+    }
+
+    bool ok = hex_load_stream(fp, cpu);
+    fclose(fp);
+    return ok;
+}
+
+uint8_t *hex_load_file_malloc(const char *path, size_t *out_size)
+{
+    FILE *fp = fopen(path, "r");
+    if (!fp) {
+        return NULL;
+    }
+
+    uint8_t *image = NULL;
+    size_t image_size = 0;
+    char line[1024];
+    uint32_t base = 0;
+
+    while (fgets(line, sizeof(line), fp)) {
+        size_t len = strlen(line);
+        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+            line[--len] = '\0';
+        }
+        if (len == 0) {
+            continue;
+        }
+        if (line[0] != ':') {
+            free(image);
+            fclose(fp);
+            return NULL;
+        }
+
+        uint8_t count = 0;
+        uint8_t addr_hi = 0;
+        uint8_t addr_lo = 0;
+        uint8_t type = 0;
+
+        if (!parse_hex_byte(&line[1], &count) ||
+            !parse_hex_byte(&line[3], &addr_hi) ||
+            !parse_hex_byte(&line[5], &addr_lo) ||
+            !parse_hex_byte(&line[7], &type)) {
+            free(image);
+            fclose(fp);
+            return NULL;
+        }
+
+        uint16_t addr = (uint16_t)((addr_hi << 8) | addr_lo);
+
+        if (type == 0x00) {
+            uint32_t target = base + addr + count;
+            if (target > image_size) {
+                size_t new_size = (size_t)target;
+                uint8_t *new_image = (uint8_t *)realloc(image, new_size);
+                if (!new_image) {
+                    free(image);
+                    fclose(fp);
+                    return NULL;
+                }
+                if (new_size > image_size) {
+                    memset(new_image + image_size, 0xFF, new_size - image_size);
+                }
+                image = new_image;
+                image_size = new_size;
+            }
+            for (uint8_t i = 0; i < count; ++i) {
+                uint8_t data = 0;
+                if (!parse_hex_byte(&line[9 + (i * 2)], &data)) {
+                    free(image);
+                    fclose(fp);
+                    return NULL;
+                }
+                image[base + addr + i] = data;
+            }
+        } else if (type == 0x01) {
+            break;
+        } else if (type == 0x04) {
+            uint8_t hi = 0;
+            uint8_t lo = 0;
+            if (!parse_hex_byte(&line[9], &hi) || !parse_hex_byte(&line[11], &lo)) {
+                free(image);
+                fclose(fp);
+                return NULL;
+            }
+            base = (uint32_t)((hi << 8) | lo) << 16;
+        } else {
+            continue;
+        }
+    }
+
+    fclose(fp);
+    if (out_size) {
+        *out_size = image_size;
+    }
+    return image;
 }

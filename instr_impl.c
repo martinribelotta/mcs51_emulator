@@ -274,37 +274,37 @@ void exec_cpl(cpu_t *cpu, op_t dst)
 void exec_movc_a_dptr(cpu_t *cpu)
 {
     uint16_t addr = (uint16_t)(cpu->dptr + cpu->acc);
-    cpu->acc = cpu->code[addr];
+    cpu->acc = cpu_code_read(cpu, addr);
 }
 
 void exec_movc_a_pc(cpu_t *cpu)
 {
     uint16_t addr = (uint16_t)(cpu->pc + cpu->acc);
-    cpu->acc = cpu->code[addr];
+    cpu->acc = cpu_code_read(cpu, addr);
 }
 
 void exec_movx_a_dptr(cpu_t *cpu)
 {
-    cpu->acc = cpu->xdata[cpu->dptr];
+    cpu->acc = cpu_xdata_read(cpu, cpu->dptr);
 }
 
 void exec_movx_dptr_a(cpu_t *cpu)
 {
-    cpu->xdata[cpu->dptr] = cpu->acc;
+    cpu_xdata_write(cpu, cpu->dptr, cpu->acc);
 }
 
 void exec_movx_a_at_ri(cpu_t *cpu, op_t ri)
 {
     uint8_t bank = (uint8_t)((cpu->psw >> 3) & 0x03);
     uint8_t addr = cpu->iram[(uint8_t)(bank * 8 + ri.arg)];
-    cpu->acc = cpu->xdata[addr];
+    cpu->acc = cpu_xdata_read(cpu, addr);
 }
 
 void exec_movx_at_ri_a(cpu_t *cpu, op_t ri)
 {
     uint8_t bank = (uint8_t)((cpu->psw >> 3) & 0x03);
     uint8_t addr = cpu->iram[(uint8_t)(bank * 8 + ri.arg)];
-    cpu->xdata[addr] = cpu->acc;
+    cpu_xdata_write(cpu, addr, cpu->acc);
 }
 
 void exec_xch(cpu_t *cpu, op_t src)

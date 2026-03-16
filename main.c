@@ -1,4 +1,6 @@
 #include "cpu.h"
+#include "mem_rom.h"
+#include "hex_loader.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,12 +35,18 @@ int main(int argc, char **argv)
     }
 
     cpu_t cpu;
+    mem_rom_t mem;
     cpu_init(&cpu);
+    mem_rom_init(&mem, NULL, 0);
+    mem_rom_attach(&cpu, &mem);
 
-    if (!hex_load_file(&cpu, argv[1])) {
+    size_t rom_size = 0;
+    uint8_t *rom = hex_load_file_malloc(argv[1], &rom_size);
+    if (!rom) {
         fprintf(stderr, "Failed to load HEX file: %s\n", argv[1]);
         return 1;
     }
+    mem_rom_set_code(&mem, rom, rom_size);
 
     uint64_t max_steps = 0;
     if (argc >= 3 && argv[2][0] != '-') {

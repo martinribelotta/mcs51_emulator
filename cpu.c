@@ -8,22 +8,126 @@
 #define PSW_CY 0x80
 #define PSW_AC 0x40
 #define PSW_OV 0x04
+#define PSW_P  0x01
 
-static uint8_t default_sfr_read(cpu_t *cpu, uint8_t addr)
+#define SFR_SP   0x81
+#define SFR_DPL  0x82
+#define SFR_DPH  0x83
+#define SFR_PSW  0xD0
+#define SFR_ACC  0xE0
+#define SFR_B    0xF0
+
+static void cpu_update_parity(cpu_t *cpu)
 {
-    return cpu->sfr[addr - 0x80];
+    uint8_t v = cpu->acc;
+    v ^= (uint8_t)(v >> 4);
+    v ^= (uint8_t)(v >> 2);
+    v ^= (uint8_t)(v >> 1);
+    if (v & 1u) {
+        cpu->psw |= PSW_P;
+    } else {
+        cpu->psw &= (uint8_t)~PSW_P;
+    }
 }
 
-static void default_sfr_write(cpu_t *cpu, uint8_t addr, uint8_t value)
+static uint8_t sfr_read_acc(const cpu_t *cpu, uint8_t addr, void *user)
 {
-    cpu->sfr[addr - 0x80] = value;
+    (void)addr;
+    (void)user;
+    return cpu->acc;
+}
+
+static void sfr_write_acc(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+{
+    (void)addr;
+    (void)user;
+    cpu->acc = value;
+}
+
+static uint8_t sfr_read_b(const cpu_t *cpu, uint8_t addr, void *user)
+{
+    (void)addr;
+    (void)user;
+    return cpu->b;
+}
+
+static void sfr_write_b(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+{
+    (void)addr;
+    (void)user;
+    cpu->b = value;
+}
+
+static uint8_t sfr_read_psw(const cpu_t *cpu, uint8_t addr, void *user)
+{
+    (void)addr;
+    (void)user;
+    return cpu->psw;
+}
+
+static void sfr_write_psw(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+{
+    (void)addr;
+    (void)user;
+    cpu->psw = value;
+}
+
+static uint8_t sfr_read_sp(const cpu_t *cpu, uint8_t addr, void *user)
+{
+    (void)addr;
+    (void)user;
+    return cpu->sp;
+}
+
+static void sfr_write_sp(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+{
+    (void)addr;
+    (void)user;
+    cpu->sp = value;
+}
+
+static uint8_t sfr_read_dpl(const cpu_t *cpu, uint8_t addr, void *user)
+{
+    (void)addr;
+    (void)user;
+    return (uint8_t)(cpu->dptr & 0xFF);
+}
+
+static uint8_t sfr_read_dph(const cpu_t *cpu, uint8_t addr, void *user)
+{
+    (void)addr;
+    (void)user;
+    return (uint8_t)(cpu->dptr >> 8);
+}
+
+static void sfr_write_dpl(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+{
+    (void)addr;
+    (void)user;
+    cpu->dptr = (uint16_t)((cpu->dptr & 0xFF00) | value);
+}
+
+static void sfr_write_dph(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+{
+    (void)addr;
+    (void)user;
+    cpu->dptr = (uint16_t)((cpu->dptr & 0x00FF) | ((uint16_t)value << 8));
 }
 
 void cpu_init(cpu_t *cpu)
 {
     memset(cpu, 0, sizeof(*cpu));
-    cpu->sfr_read = default_sfr_read;
-    cpu->sfr_write = default_sfr_write;
+    cpu_set_sfr_hook(cpu, SFR_ACC, sfr_read_acc, sfr_write_acc);
+    cpu_set_sfr_hook(cpu, SFR_B, sfr_read_b, sfr_write_b);
+    cpu_set_sfr_hook(cpu, SFR_PSW, sfr_read_psw, sfr_write_psw);
+    cpu_set_sfr_hook(cpu, SFR_SP, sfr_read_sp, sfr_write_sp);
+    cpu_set_sfr_hook(cpu, SFR_DPL, sfr_read_dpl, sfr_write_dpl);
+    cpu_set_sfr_hook(cpu, SFR_DPH, sfr_read_dph, sfr_write_dph);
+    cpu->mem_ops.code_read = NULL;
+    cpu->mem_ops.code_write = NULL;
+    cpu->mem_ops.xdata_read = NULL;
+    cpu->mem_ops.xdata_write = NULL;
+    cpu->mem_user = NULL;
     cpu_reset(cpu);
 }
 
@@ -44,7 +148,9 @@ void cpu_reset(cpu_t *cpu)
 
 uint8_t cpu_fetch8(cpu_t *cpu)
 {
-    return cpu->code[cpu->pc++];
+    uint8_t value = cpu_code_read(cpu, cpu->pc);
+    cpu->pc++;
+    return value;
 }
 
 uint16_t cpu_fetch16(cpu_t *cpu)
@@ -59,10 +165,11 @@ uint8_t cpu_read_direct(cpu_t *cpu, uint8_t addr)
     if (addr < 0x80) {
         return cpu->iram[addr];
     }
-    if (cpu->sfr_read) {
-        return cpu->sfr_read(cpu, addr);
+    uint8_t idx = (uint8_t)(addr - 0x80);
+    if (cpu->sfr_hooks[idx].read) {
+        return cpu->sfr_hooks[idx].read(cpu, addr, cpu->sfr_user);
     }
-    return cpu->sfr[addr - 0x80];
+    return cpu->sfr[idx];
 }
 
 void cpu_write_direct(cpu_t *cpu, uint8_t addr, uint8_t value)
@@ -71,11 +178,42 @@ void cpu_write_direct(cpu_t *cpu, uint8_t addr, uint8_t value)
         cpu->iram[addr] = value;
         return;
     }
-    if (cpu->sfr_write) {
-        cpu->sfr_write(cpu, addr, value);
+    uint8_t idx = (uint8_t)(addr - 0x80);
+    if (cpu->sfr_hooks[idx].write) {
+        cpu->sfr_hooks[idx].write(cpu, addr, value, cpu->sfr_user);
         return;
     }
-    cpu->sfr[addr - 0x80] = value;
+    cpu->sfr[idx] = value;
+}
+
+uint8_t cpu_code_read(const cpu_t *cpu, uint16_t addr)
+{
+    if (cpu->mem_ops.code_read) {
+        return cpu->mem_ops.code_read(cpu, addr, cpu->mem_user);
+    }
+    return 0xFF;
+}
+
+void cpu_code_write(cpu_t *cpu, uint16_t addr, uint8_t value)
+{
+    if (cpu->mem_ops.code_write) {
+        cpu->mem_ops.code_write(cpu, addr, value, cpu->mem_user);
+    }
+}
+
+uint8_t cpu_xdata_read(const cpu_t *cpu, uint16_t addr)
+{
+    if (cpu->mem_ops.xdata_read) {
+        return cpu->mem_ops.xdata_read(cpu, addr, cpu->mem_user);
+    }
+    return 0xFF;
+}
+
+void cpu_xdata_write(cpu_t *cpu, uint16_t addr, uint8_t value)
+{
+    if (cpu->mem_ops.xdata_write) {
+        cpu->mem_ops.xdata_write(cpu, addr, value, cpu->mem_user);
+    }
 }
 
 static void bit_addr_to_byte_bit(uint8_t bit_addr, uint8_t *byte_addr, uint8_t *bit_pos)
@@ -314,6 +452,9 @@ bool cpu_step(cpu_t *cpu)
         cpu->halted = true;
         break;
     }
+    if (!cpu->halted) {
+        cpu_update_parity(cpu);
+    }
     return !cpu->halted;
 }
 
@@ -336,6 +477,34 @@ void cpu_set_trace(cpu_t *cpu, bool enabled, cpu_trace_fn fn, void *user)
     cpu->trace_user = user;
 }
 
+void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_hook write)
+{
+    if (addr < 0x80) {
+        return;
+    }
+    uint8_t idx = (uint8_t)(addr - 0x80);
+    cpu->sfr_hooks[idx].read = read;
+    cpu->sfr_hooks[idx].write = write;
+}
+
+void cpu_set_sfr_user(cpu_t *cpu, void *user)
+{
+    cpu->sfr_user = user;
+}
+
+void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, void *user)
+{
+    if (ops) {
+        cpu->mem_ops = *ops;
+    } else {
+        cpu->mem_ops.code_read = NULL;
+        cpu->mem_ops.code_write = NULL;
+        cpu->mem_ops.xdata_read = NULL;
+        cpu->mem_ops.xdata_write = NULL;
+    }
+    cpu->mem_user = user;
+}
+
 void cpu_set_carry(cpu_t *cpu, bool value)
 {
     if (value) {
@@ -345,7 +514,7 @@ void cpu_set_carry(cpu_t *cpu, bool value)
     }
 }
 
-bool cpu_get_carry(cpu_t *cpu)
+bool cpu_get_carry(const cpu_t *cpu)
 {
     return (cpu->psw & PSW_CY) != 0;
 }

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "cpu.h"
+#include "mem_default.h"
 
 static int failures = 0;
 
@@ -20,10 +21,17 @@ static int failures = 0;
 
 static void load_code(cpu_t *cpu, const uint8_t *code, size_t len)
 {
+    static mem_default_t mem;
     cpu_init(cpu);
-    memset(cpu->code, 0, sizeof(cpu->code));
-    memcpy(cpu->code, code, len);
+    mem_default_init(&mem);
+    mem_default_attach(cpu, &mem);
+    memcpy(mem.code, code, len);
     cpu->pc = 0;
+}
+
+static mem_default_t *get_mem(cpu_t *cpu)
+{
+    return (mem_default_t *)cpu->mem_user;
 }
 
 static void test_nop(void)
@@ -328,31 +336,32 @@ static void test_movc_movx(void)
     cpu_t cpu;
     uint8_t code[] = { 0x93, 0xE0, 0xF0, 0xE2, 0xF2 };
     load_code(&cpu, code, sizeof(code));
+    mem_default_t *mem = get_mem(&cpu);
     cpu.dptr = 0x0100;
     cpu.acc = 0x02;
-    cpu.code[0x0102] = 0xAA;
+    mem->code[0x0102] = 0xAA;
     cpu_step(&cpu);
     ASSERT_EQ("MOVC A,@A+DPTR", cpu.acc, 0xAA);
 
     cpu.dptr = 0x0200;
-    cpu.xdata[0x0200] = 0xCC;
+    mem->xdata[0x0200] = 0xCC;
     cpu_step(&cpu);
     ASSERT_EQ("MOVX A,@DPTR", cpu.acc, 0xCC);
 
     cpu.acc = 0xDD;
     cpu.dptr = 0x0200;
     cpu_step(&cpu);
-    ASSERT_EQ("MOVX @DPTR,A", cpu.xdata[0x0200], 0xDD);
+    ASSERT_EQ("MOVX @DPTR,A", mem->xdata[0x0200], 0xDD);
 
     cpu.iram[0] = 0x10;
-    cpu.xdata[0x10] = 0xEE;
+    mem->xdata[0x10] = 0xEE;
     cpu_step(&cpu);
     ASSERT_EQ("MOVX A,@Ri", cpu.acc, 0xEE);
 
     cpu.acc = 0x99;
     cpu.iram[0] = 0x10;
     cpu_step(&cpu);
-    ASSERT_EQ("MOVX @Ri,A", cpu.xdata[0x10], 0x99);
+    ASSERT_EQ("MOVX @Ri,A", mem->xdata[0x10], 0x99);
 }
 
 static void test_movc_pc(void)
@@ -432,6 +441,80 @@ static void test_inc_dec_misc(void)
     ASSERT_EQ("CLR A", cpu.acc, 0x00);
 }
 
+static uint8_t parity_bit(uint8_t acc)
+{
+    uint8_t v = acc;
+    v ^= (uint8_t)(v >> 4);
+    v ^= (uint8_t)(v >> 2);
+    v ^= (uint8_t)(v >> 1);
+    return (uint8_t)(v & 1u);
+}
+
+static void test_parity_flag(void)
+{
+    cpu_t cpu;
+    uint8_t code[] = { 0x74, 0x00, 0x74, 0x01, 0x74, 0xFF };
+    load_code(&cpu, code, sizeof(code));
+
+    cpu_step(&cpu);
+    ASSERT_EQ("P for A=00", cpu.psw & 0x01, parity_bit(cpu.acc));
+
+    cpu_step(&cpu);
+    ASSERT_EQ("P for A=01", cpu.psw & 0x01, parity_bit(cpu.acc));
+
+    cpu_step(&cpu);
+    ASSERT_EQ("P for A=FF", cpu.psw & 0x01, parity_bit(cpu.acc));
+}
+
+static void test_add_flags(void)
+{
+    cpu_t cpu;
+    uint8_t code[] = { 0x24, 0x01, 0x24, 0x01, 0x24, 0x01 };
+    load_code(&cpu, code, sizeof(code));
+
+    cpu.acc = 0x0F;
+    cpu_step(&cpu);
+    ASSERT_EQ("ADD AC", cpu.psw & 0x40, 0x40);
+    ASSERT_EQ("ADD CY", cpu.psw & 0x80, 0x00);
+    ASSERT_EQ("ADD OV", cpu.psw & 0x04, 0x00);
+
+    cpu.acc = 0x7F;
+    cpu_step(&cpu);
+    ASSERT_EQ("ADD OV", cpu.psw & 0x04, 0x04);
+
+    cpu.acc = 0xFF;
+    cpu_step(&cpu);
+    ASSERT_EQ("ADD CY", cpu.psw & 0x80, 0x80);
+}
+
+static void test_addc_subb_flags(void)
+{
+    cpu_t cpu;
+    uint8_t code[] = { 0x34, 0x00, 0x94, 0x00 };
+    load_code(&cpu, code, sizeof(code));
+
+    cpu.acc = 0x0F;
+    cpu_set_carry(&cpu, true);
+    cpu_step(&cpu);
+    ASSERT_EQ("ADDC AC", cpu.psw & 0x40, 0x40);
+
+    cpu.acc = 0x00;
+    cpu_set_carry(&cpu, true);
+    cpu_step(&cpu);
+    ASSERT_EQ("SUBB CY", cpu.psw & 0x80, 0x80);
+}
+
+static void test_da_flags(void)
+{
+    cpu_t cpu;
+    uint8_t code[] = { 0xD4 };
+    load_code(&cpu, code, sizeof(code));
+    cpu.acc = 0x9B;
+    cpu.psw |= 0x40;
+    cpu_step(&cpu);
+    ASSERT_EQ("DA carry", cpu.psw & 0x80, 0x80);
+}
+
 int main(void)
 {
     test_nop();
@@ -448,6 +531,10 @@ int main(void)
     test_movc_pc();
     test_da_mul_div_xch();
     test_inc_dec_misc();
+    test_parity_flag();
+    test_add_flags();
+    test_addc_subb_flags();
+    test_da_flags();
 
     if (failures == 0) {
         printf("All tests passed.\n");
