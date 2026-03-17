@@ -1,5 +1,5 @@
 #include "cpu.h"
-#include "mem_rom.h"
+#include "mem_map.h"
 #include "hex_loader.h"
 
 #include <stdio.h>
@@ -7,6 +7,22 @@
 #include <string.h>
 
 bool hex_load_file(cpu_t *cpu, const char *path);
+
+enum { RAM_8K_SIZE = 8 * 1024 };
+
+static uint8_t ram8k_read(const cpu_t *cpu, uint16_t addr, void *user)
+{
+    (void)cpu;
+    uint8_t *ram = (uint8_t *)user;
+    return ram[addr];
+}
+
+static void ram8k_write(cpu_t *cpu, uint16_t addr, uint8_t value, void *user)
+{
+    (void)cpu;
+    uint8_t *ram = (uint8_t *)user;
+    ram[addr] = value;
+}
 
 static void trace_stdout(cpu_t *cpu, uint16_t pc, uint8_t opcode, const char *name, void *user)
 {
@@ -35,18 +51,39 @@ int main(int argc, char **argv)
     }
 
     cpu_t cpu;
-    mem_rom_t mem;
+    mem_map_t mem;
+    uint8_t code8k[RAM_8K_SIZE];
+    uint8_t xdata8k[RAM_8K_SIZE];
+    mem_map_region_t code_regions[] = {
+        {
+            .base = 0x0000,
+            .size = RAM_8K_SIZE,
+            .read = ram8k_read,
+            .write = ram8k_write,
+            .user = code8k,
+        },
+    };
+    mem_map_region_t xdata_regions[] = {
+        {
+            .base = 0x0000,
+            .size = RAM_8K_SIZE,
+            .read = ram8k_read,
+            .write = ram8k_write,
+            .user = xdata8k,
+        },
+    };
     cpu_init(&cpu);
-    mem_rom_init(&mem, NULL, 0);
-    mem_rom_attach(&cpu, &mem);
+    mem_map_init(&mem);
+    mem_map_set_code_regions(&mem, code_regions, sizeof(code_regions) / sizeof(code_regions[0]));
+    mem_map_set_xdata_regions(&mem, xdata_regions, sizeof(xdata_regions) / sizeof(xdata_regions[0]));
+    mem_map_attach(&cpu, &mem);
+    memset(code8k, 0xFF, sizeof(code8k));
+    memset(xdata8k, 0x00, sizeof(xdata8k));
 
-    size_t rom_size = 0;
-    uint8_t *rom = hex_load_file_malloc(argv[1], &rom_size);
-    if (!rom) {
+    if (!hex_load_file(&cpu, argv[1])) {
         fprintf(stderr, "Failed to load HEX file: %s\n", argv[1]);
         return 1;
     }
-    mem_rom_set_code(&mem, rom, rom_size);
 
     uint64_t max_steps = 0;
     if (argc >= 3 && argv[2][0] != '-') {

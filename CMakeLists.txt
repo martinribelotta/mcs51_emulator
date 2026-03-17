@@ -11,8 +11,7 @@ add_executable(mcs51_emulator
     decoder.c
     instr_impl.c
     hex_loader.c
-    mem_default.c
-    mem_rom.c
+    mem_map.c
     main.c
 )
 
@@ -31,8 +30,7 @@ add_executable(mcs51_tests
     cpu.c
     decoder.c
     instr_impl.c
-    mem_default.c
-    mem_rom.c
+    mem_map.c
     tests/test_runner.c
 )
 

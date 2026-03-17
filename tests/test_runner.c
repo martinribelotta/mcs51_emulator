@@ -1,9 +1,47 @@
 #include <stdio.h>
 #include <string.h>
 #include "cpu.h"
-#include "mem_default.h"
+#include "mem_map.h"
 
 static int failures = 0;
+
+typedef struct {
+    uint8_t code[65536];
+    uint8_t xdata[65536];
+    mem_map_t map;
+    mem_map_region_t code_region;
+    mem_map_region_t xdata_region;
+} test_mem_t;
+
+static test_mem_t mem;
+
+static uint8_t test_code_read(const cpu_t *cpu, uint16_t addr, void *user)
+{
+    (void)cpu;
+    uint8_t *code = (uint8_t *)user;
+    return code[addr];
+}
+
+static void test_code_write(cpu_t *cpu, uint16_t addr, uint8_t value, void *user)
+{
+    (void)cpu;
+    uint8_t *code = (uint8_t *)user;
+    code[addr] = value;
+}
+
+static uint8_t test_xdata_read(const cpu_t *cpu, uint16_t addr, void *user)
+{
+    (void)cpu;
+    uint8_t *xdata = (uint8_t *)user;
+    return xdata[addr];
+}
+
+static void test_xdata_write(cpu_t *cpu, uint16_t addr, uint8_t value, void *user)
+{
+    (void)cpu;
+    uint8_t *xdata = (uint8_t *)user;
+    xdata[addr] = value;
+}
 
 #define ASSERT_EQ(msg, a, b) do { \
     if ((a) != (b)) { \
@@ -21,17 +59,31 @@ static int failures = 0;
 
 static void load_code(cpu_t *cpu, const uint8_t *code, size_t len)
 {
-    static mem_default_t mem;
     cpu_init(cpu);
-    mem_default_init(&mem);
-    mem_default_attach(cpu, &mem);
+    mem_map_init(&mem.map);
+    mem.code_region.base = 0x0000;
+    mem.code_region.size = 65536u;
+    mem.code_region.read = test_code_read;
+    mem.code_region.write = test_code_write;
+    mem.code_region.user = mem.code;
+    mem.xdata_region.base = 0x0000;
+    mem.xdata_region.size = 65536u;
+    mem.xdata_region.read = test_xdata_read;
+    mem.xdata_region.write = test_xdata_write;
+    mem.xdata_region.user = mem.xdata;
+    mem_map_set_code_regions(&mem.map, &mem.code_region, 1);
+    mem_map_set_xdata_regions(&mem.map, &mem.xdata_region, 1);
+    mem_map_attach(cpu, &mem.map);
+    memset(mem.code, 0xFF, sizeof(mem.code));
+    memset(mem.xdata, 0x00, sizeof(mem.xdata));
     memcpy(mem.code, code, len);
     cpu->pc = 0;
 }
 
-static mem_default_t *get_mem(cpu_t *cpu)
+static test_mem_t *get_mem(cpu_t *cpu)
 {
-    return (mem_default_t *)cpu->mem_user;
+    (void)cpu;
+    return &mem;
 }
 
 static void test_nop(void)
@@ -336,7 +388,7 @@ static void test_movc_movx(void)
     cpu_t cpu;
     uint8_t code[] = { 0x93, 0xE0, 0xF0, 0xE2, 0xF2 };
     load_code(&cpu, code, sizeof(code));
-    mem_default_t *mem = get_mem(&cpu);
+    test_mem_t *mem = get_mem(&cpu);
     cpu.dptr = 0x0100;
     cpu.acc = 0x02;
     mem->code[0x0102] = 0xAA;
