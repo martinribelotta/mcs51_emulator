@@ -6,6 +6,7 @@
 #include "timing.h"
 #include "uart.h"
 #include "timers.h"
+#include "ports.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,6 +98,7 @@ static const cpu_time_iface_t time_iface = {
 };
 static uart_t uart;
 static timers_t timers;
+static ports_t ports;
 
 static void timers_tick_hook(cpu_t *cpu, uint32_t cycles, void *user);
 static void uart_tick_hook(cpu_t *cpu, uint32_t cycles, void *user);
@@ -127,6 +129,22 @@ static void uart_tick_hook(cpu_t *cpu, uint32_t cycles, void *user)
     uart_tick(u, cycles);
 }
 
+static uint8_t ports_read_stub(uint8_t port, void *user)
+{
+    (void)port;
+    (void)user;
+    return 0x00;
+}
+
+static void ports_write_stdout(uint8_t port, uint8_t level, uint8_t mask, void *user)
+{
+    if (mask == 0) {
+        return;
+    }
+    FILE *out = user ? (FILE *)user : stdout;
+    fprintf(out, "P%u: level=0x%02X mask=0x%02X\n", port, level, mask);
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -143,6 +161,7 @@ int main(int argc, char **argv)
     uart_set_tx_callback(&uart, uart_tx_stdout, stdout);
     uart_attach(&cpu, &uart);
     timers_init(&timers, &cpu);
+    ports_init(&ports, &cpu, ports_read_stub, ports_write_stdout, stdout);
     cpu_set_tick_hooks(&cpu, tick_hooks, (uint8_t)MCS51_ARRAY_LEN(tick_hooks));
 
     if (!hex_load_file(&cpu, argv[1])) {

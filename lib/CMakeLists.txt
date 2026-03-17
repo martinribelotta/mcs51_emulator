@@ -3,6 +3,7 @@ add_library(mcs51_lib
     decoder.c
     instr_impl.c
     mem_map.c
+    ports.c
     timers.c
     timing.c
     uart.c
@@ -26,6 +27,7 @@ install(FILES
     instr_impl.h
     instr_list.h
     mem_map.h
+    ports.h
     timers.h
     timing.h
     uart.h
