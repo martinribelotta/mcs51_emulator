@@ -6,20 +6,14 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+add_subdirectory(lib)
+
 add_executable(mcs51_emulator
-    cpu.c
-    decoder.c
-    instr_impl.c
-    hex_loader.c
-    mem_map.c
-    timing.c
-    uart.c
-    main.c
+    src/main.c
+    src/hex_loader.c
 )
 
-target_include_directories(mcs51_emulator PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-)
+target_link_libraries(mcs51_emulator PRIVATE mcs51_lib)
 
 target_compile_options(mcs51_emulator PRIVATE
     $<$<C_COMPILER_ID:MSVC>:/W4>
@@ -29,17 +23,15 @@ target_compile_options(mcs51_emulator PRIVATE
 enable_testing()
 
 add_executable(mcs51_tests
-    cpu.c
-    decoder.c
-    instr_impl.c
-    mem_map.c
-    timing.c
-    uart.c
     tests/test_runner.c
 )
 
-target_include_directories(mcs51_tests PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
+target_link_libraries(mcs51_tests PRIVATE mcs51_lib)
+
+install(EXPORT mcs51Targets
+    FILE mcs51Targets.cmake
+    NAMESPACE mcs51::
+    DESTINATION lib/cmake/mcs51
 )
 
 target_compile_options(mcs51_tests PRIVATE
