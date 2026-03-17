@@ -177,15 +177,27 @@ static void uart_write_sbuf(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
     (void)addr;
     uart_t *uart = (uart_t *)user;
     sfr_set(cpu, SFR_SBUF, value);
+    uint8_t scon = sfr_get(cpu, SFR_SCON);
+    uint8_t sm0 = (scon & SCON_SM0) != 0;
+    uint8_t sm1 = (scon & SCON_SM1) != 0;
+
+    if (sm0 && !sm1) {
+        uint8_t rx = uart->mode0_cb ? uart->mode0_cb(value, uart->tx_user) : 0x00;
+        sfr_set(cpu, SFR_SBUF, rx);
+        uart_set_ri(cpu, true);
+        uart_set_ti(cpu, true);
+        return;
+    }
+
     uart->tx_byte = value;
-    uart->tx_bit9 = (sfr_get(cpu, SFR_SCON) & SCON_TB8) ? 1u : 0u;
+    uart->tx_bit9 = (scon & SCON_TB8) ? 1u : 0u;
     uart_set_ti(cpu, false);
     uart_update_baud(uart);
     if (uart->bit_cycles == 0) {
         return;
     }
     uart->tx_busy = true;
-    uart->tx_bits_remaining = (uint8_t)((sfr_get(cpu, SFR_SCON) & SCON_SM0) ? 11 : 10);
+    uart->tx_bits_remaining = (uint8_t)(sm0 ? 11 : 10);
     uart->bit_acc = 0;
 }
 
@@ -297,6 +309,15 @@ void uart_set_baud_callback(uart_t *uart, uart_baud_change_fn fn, void *user)
         return;
     }
     uart->baud_cb = fn;
+    uart->tx_user = user;
+}
+
+void uart_set_mode0_callback(uart_t *uart, uart_mode0_xfer_fn fn, void *user)
+{
+    if (!uart) {
+        return;
+    }
+    uart->mode0_cb = fn;
     uart->tx_user = user;
 }
 

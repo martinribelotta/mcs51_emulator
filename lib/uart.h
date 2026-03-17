@@ -10,6 +10,7 @@
 typedef void (*uart_tx_byte_fn)(uint8_t byte, void *user);
 typedef void (*uart_tx_frame_fn)(uint8_t byte, uint8_t bit9, uint32_t baud, void *user);
 typedef void (*uart_baud_change_fn)(uint32_t baud, void *user);
+typedef uint8_t (*uart_mode0_xfer_fn)(uint8_t tx_byte, void *user);
 
 typedef struct {
     const timing_config_t *timing_cfg;
@@ -29,6 +30,7 @@ typedef struct {
     uart_tx_byte_fn tx_cb;
     uart_tx_frame_fn tx_cb9;
     uart_baud_change_fn baud_cb;
+    uart_mode0_xfer_fn mode0_cb;
     void *tx_user;
 } uart_t;
 
@@ -38,6 +40,7 @@ void uart_tick(uart_t *uart, uint32_t cycles);
 void uart_set_tx_callback(uart_t *uart, uart_tx_byte_fn fn, void *user);
 void uart_set_tx_callback9(uart_t *uart, uart_tx_frame_fn fn, void *user);
 void uart_set_baud_callback(uart_t *uart, uart_baud_change_fn fn, void *user);
+void uart_set_mode0_callback(uart_t *uart, uart_mode0_xfer_fn fn, void *user);
 bool uart_queue_rx_byte(uart_t *uart, uint8_t byte);
 bool uart_queue_rx_frame(uart_t *uart, uint8_t byte, uint8_t bit9);
 uint32_t uart_get_baud(const uart_t *uart);
