@@ -575,6 +575,21 @@ static void test_da_flags(void)
     ASSERT_EQ("DA carry", cpu.psw & 0x80, 0x80);
 }
 
+static void test_idle_wakeup(void)
+{
+    cpu_t cpu;
+    uint8_t code[] = { 0x00, 0x00 };
+    load_code(&cpu, code, sizeof(code));
+    cpu_write_direct(&cpu, 0xA8, 0x82); /* IE: EA + ET0 */
+    cpu_write_direct(&cpu, 0x88, 0x20); /* TCON: TF0 */
+    cpu_write_direct(&cpu, 0x87, 0x01); /* PCON: IDL */
+
+    uint8_t cycles = cpu_step(&cpu);
+    ASSERT_EQ("IDL cpu_step cycles", cycles, 0);
+    cpu_poll_interrupts(&cpu);
+    ASSERT_EQ("IDL wake vector", cpu.pc, 0x000B);
+}
+
 int main(void)
 {
     test_nop();
@@ -595,6 +610,7 @@ int main(void)
     test_add_flags();
     test_addc_subb_flags();
     test_da_flags();
+    test_idle_wakeup();
 
     if (failures == 0) {
         printf("All tests passed.\n");

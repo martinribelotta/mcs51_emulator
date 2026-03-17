@@ -94,6 +94,9 @@ struct cpu {
     uint8_t isr_stack[2];
     uint8_t isr_depth;
 
+    bool idle;
+    bool power_down;
+
     bool int0_level;
     bool int1_level;
     bool int0_prev_level;
@@ -157,6 +160,8 @@ void cpu_set_tick_hooks(cpu_t *cpu, const cpu_tick_entry_t *hooks, uint8_t count
 void cpu_set_int0_level(cpu_t *cpu, bool level);
 void cpu_set_int1_level(cpu_t *cpu, bool level);
 void cpu_on_reti(cpu_t *cpu);
+void cpu_poll_interrupts(cpu_t *cpu);
+void cpu_wake(cpu_t *cpu);
 
 void cpu_set_carry(cpu_t *cpu, bool value);
 bool cpu_get_carry(const cpu_t *cpu);

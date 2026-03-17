@@ -52,10 +52,14 @@
 #define TCON_TF0 0x20
 #define TCON_TF1 0x80
 
+#define PCON_IDL 0x01
+#define PCON_PD  0x02
+
 #define SCON_RI  0x01
 #define SCON_TI  0x02
 
 static void cpu_check_interrupts(cpu_t *cpu);
+static void cpu_apply_pcon(cpu_t *cpu, uint8_t value);
 
 static uint8_t sfr_get(const cpu_t *cpu, uint8_t addr)
 {
@@ -206,6 +210,8 @@ void cpu_reset(cpu_t *cpu)
     cpu->trace_enabled = false;
     cpu->trace_fn = NULL;
     cpu->trace_user = NULL;
+    cpu->idle = false;
+    cpu->power_down = false;
 
     memset(cpu->sfr, 0x00, sizeof(cpu->sfr));
     sfr_set(cpu, SFR_ACC, 0x00);
@@ -268,9 +274,15 @@ void cpu_write_direct(cpu_t *cpu, uint8_t addr, uint8_t value)
     if (cpu->sfr_hooks[idx].write) {
         void *user = cpu->sfr_hooks[idx].user ? cpu->sfr_hooks[idx].user : cpu->sfr_user;
         cpu->sfr_hooks[idx].write(cpu, addr, value, user);
+        if (addr == SFR_PCON) {
+            cpu_apply_pcon(cpu, sfr_get(cpu, SFR_PCON));
+        }
         return;
     }
     cpu->sfr[idx] = value;
+    if (addr == SFR_PCON) {
+        cpu_apply_pcon(cpu, value);
+    }
 }
 
 uint8_t cpu_code_read(const cpu_t *cpu, uint16_t addr)
@@ -340,6 +352,9 @@ void cpu_write_bit(cpu_t *cpu, uint8_t bit_addr, bool value)
 
 uint8_t cpu_step(cpu_t *cpu)
 {
+    if (cpu->power_down || cpu->idle) {
+        return 0;
+    }
     if (cpu->halted) {
         return 0;
     }
@@ -574,13 +589,20 @@ void cpu_run(cpu_t *cpu, uint64_t max_steps)
         }
         uint8_t cycles = cpu_step(cpu);
         if (cycles == 0) {
-            break;
+            if (cpu->idle && !cpu->power_down) {
+                cycles = 1;
+            } else {
+                break;
+            }
         }
         for (uint8_t i = 0; i < cpu->tick_hook_count; ++i) {
             const cpu_tick_entry_t *entry = &cpu->tick_hooks[i];
             if (entry->fn) {
                 entry->fn(cpu, cycles, entry->user);
             }
+        }
+        if (cpu->idle && !cpu->power_down) {
+            cpu_check_interrupts(cpu);
         }
         steps++;
     }
@@ -609,7 +631,11 @@ void cpu_run_timed(cpu_t *cpu,
         }
         uint8_t cycles = cpu_step(cpu);
         if (cycles == 0) {
-            break;
+            if (cpu->idle && !cpu->power_down) {
+                cycles = 1;
+            } else {
+                break;
+            }
         }
         for (uint8_t i = 0; i < cpu->tick_hook_count; ++i) {
             const cpu_tick_entry_t *entry = &cpu->tick_hooks[i];
@@ -618,6 +644,9 @@ void cpu_run_timed(cpu_t *cpu,
             }
         }
         timing_step(timing_state, cycles);
+        if (cpu->idle && !cpu->power_down) {
+            cpu_check_interrupts(cpu);
+        }
         steps++;
 
         if (time_iface && time_iface->now_ns && time_iface->sleep_ns) {
@@ -737,8 +766,28 @@ void cpu_on_reti(cpu_t *cpu)
     }
 }
 
+void cpu_poll_interrupts(cpu_t *cpu)
+{
+    cpu_check_interrupts(cpu);
+}
+
+void cpu_wake(cpu_t *cpu)
+{
+    if (!cpu) {
+        return;
+    }
+    cpu->idle = false;
+    cpu->power_down = false;
+    uint8_t pcon = sfr_get(cpu, SFR_PCON);
+    pcon &= (uint8_t)~(PCON_IDL | PCON_PD);
+    sfr_set(cpu, SFR_PCON, pcon);
+}
+
 static bool cpu_interrupt_pending(cpu_t *cpu, int src, uint8_t *out_prio, uint16_t *out_vector)
 {
+    if (cpu->power_down) {
+        return false;
+    }
     uint8_t ie = sfr_get(cpu, SFR_IE);
     uint8_t ip = sfr_get(cpu, SFR_IP);
     uint8_t tcon = sfr_get(cpu, SFR_TCON);
@@ -792,6 +841,12 @@ static bool cpu_interrupt_pending(cpu_t *cpu, int src, uint8_t *out_prio, uint16
 
 static void cpu_service_interrupt(cpu_t *cpu, int src, uint8_t prio, uint16_t vector)
 {
+    if (cpu->idle) {
+        cpu->idle = false;
+        uint8_t pcon = sfr_get(cpu, SFR_PCON);
+        pcon &= (uint8_t)~PCON_IDL;
+        sfr_set(cpu, SFR_PCON, pcon);
+    }
     if (cpu->in_isr) {
         if (cpu->isr_depth < MCS51_ARRAY_LEN(cpu->isr_stack)) {
             cpu->isr_stack[cpu->isr_depth++] = cpu->isr_prio;
@@ -841,6 +896,9 @@ static void cpu_check_interrupts(cpu_t *cpu)
     if (!cpu) {
         return;
     }
+    if (cpu->power_down) {
+        return;
+    }
 
     uint8_t best_prio = 0;
     uint16_t best_vec = 0;
@@ -864,6 +922,23 @@ static void cpu_check_interrupts(cpu_t *cpu)
 
     if (best_src >= 0) {
         cpu_service_interrupt(cpu, best_src, best_prio, best_vec);
+    }
+}
+
+static void cpu_apply_pcon(cpu_t *cpu, uint8_t value)
+{
+    if (!cpu) {
+        return;
+    }
+    if (value & PCON_PD) {
+        cpu->power_down = true;
+        cpu->idle = false;
+        return;
+    }
+    if (value & PCON_IDL) {
+        cpu->idle = true;
+    } else {
+        cpu->idle = false;
     }
 }
 
