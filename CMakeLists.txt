@@ -13,6 +13,7 @@ add_executable(mcs51_emulator
     hex_loader.c
     mem_map.c
     timing.c
+    uart.c
     main.c
 )
 
@@ -33,6 +34,7 @@ add_executable(mcs51_tests
     instr_impl.c
     mem_map.c
     timing.c
+    uart.c
     tests/test_runner.c
 )
 

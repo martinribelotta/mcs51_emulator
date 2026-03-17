@@ -21,6 +21,8 @@ typedef struct {
     cpu_xdata_write_fn xdata_write;
 } cpu_mem_ops_t;
 
+typedef void (*cpu_tick_fn)(cpu_t *cpu, uint32_t cycles, void *user);
+
 typedef uint64_t (*cpu_time_now_ns_fn)(void *user);
 typedef void (*cpu_time_sleep_ns_fn)(uint64_t ns, void *user);
 
@@ -49,6 +51,7 @@ void cpu_sfr_write_dph(cpu_t *cpu, uint8_t addr, uint8_t value, void *user);
 typedef struct {
     sfr_read_hook read;
     sfr_write_hook write;
+    void *user;
 } sfr_hook_t;
 
 struct cpu {
@@ -74,18 +77,21 @@ struct cpu {
 
     cpu_mem_ops_t mem_ops;
     void *mem_user;
+
+    cpu_tick_fn tick_fn;
+    void *tick_user;
 };
 
 // CPU_INIT_TEMPLATE_INIT: initializer for static CPU templates with default SFR hooks.
 #define CPU_INIT_TEMPLATE_INIT { \
     .sp = 0x07, \
     .sfr_hooks = { \
-        [0xE0 - 0x80] = { cpu_sfr_read_acc, cpu_sfr_write_acc }, \
-        [0xF0 - 0x80] = { cpu_sfr_read_b, cpu_sfr_write_b }, \
-        [0xD0 - 0x80] = { cpu_sfr_read_psw, cpu_sfr_write_psw }, \
-        [0x81 - 0x80] = { cpu_sfr_read_sp, cpu_sfr_write_sp }, \
-        [0x82 - 0x80] = { cpu_sfr_read_dpl, cpu_sfr_write_dpl }, \
-        [0x83 - 0x80] = { cpu_sfr_read_dph, cpu_sfr_write_dph }, \
+        [0xE0 - 0x80] = { cpu_sfr_read_acc, cpu_sfr_write_acc, NULL }, \
+        [0xF0 - 0x80] = { cpu_sfr_read_b, cpu_sfr_write_b, NULL }, \
+        [0xD0 - 0x80] = { cpu_sfr_read_psw, cpu_sfr_write_psw, NULL }, \
+        [0x81 - 0x80] = { cpu_sfr_read_sp, cpu_sfr_write_sp, NULL }, \
+        [0x82 - 0x80] = { cpu_sfr_read_dpl, cpu_sfr_write_dpl, NULL }, \
+        [0x83 - 0x80] = { cpu_sfr_read_dph, cpu_sfr_write_dph, NULL }, \
     }, \
 }
 
@@ -122,9 +128,10 @@ void cpu_run_timed(cpu_t *cpu,
                    timing_state_t *timing_state,
                    const cpu_time_iface_t *time_iface);
 void cpu_set_trace(cpu_t *cpu, bool enabled, cpu_trace_fn fn, void *user);
-void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_hook write);
+void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_hook write, void *user);
 void cpu_set_sfr_user(cpu_t *cpu, void *user);
 void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, const void *user);
+void cpu_set_tick_hook(cpu_t *cpu, cpu_tick_fn fn, void *user);
 
 void cpu_set_carry(cpu_t *cpu, bool value);
 bool cpu_get_carry(const cpu_t *cpu);

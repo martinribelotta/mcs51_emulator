@@ -136,6 +136,8 @@ void cpu_reset(cpu_t *cpu)
     reset.sfr_user = cpu->sfr_user;
     reset.mem_ops = cpu->mem_ops;
     reset.mem_user = cpu->mem_user;
+    reset.tick_fn = cpu->tick_fn;
+    reset.tick_user = cpu->tick_user;
     *cpu = reset;
 }
 
@@ -160,7 +162,8 @@ uint8_t cpu_read_direct(cpu_t *cpu, uint8_t addr)
     }
     uint8_t idx = (uint8_t)(addr - 0x80);
     if (cpu->sfr_hooks[idx].read) {
-        return cpu->sfr_hooks[idx].read(cpu, addr, cpu->sfr_user);
+        void *user = cpu->sfr_hooks[idx].user ? cpu->sfr_hooks[idx].user : cpu->sfr_user;
+        return cpu->sfr_hooks[idx].read(cpu, addr, user);
     }
     return cpu->sfr[idx];
 }
@@ -173,7 +176,8 @@ void cpu_write_direct(cpu_t *cpu, uint8_t addr, uint8_t value)
     }
     uint8_t idx = (uint8_t)(addr - 0x80);
     if (cpu->sfr_hooks[idx].write) {
-        cpu->sfr_hooks[idx].write(cpu, addr, value, cpu->sfr_user);
+        void *user = cpu->sfr_hooks[idx].user ? cpu->sfr_hooks[idx].user : cpu->sfr_user;
+        cpu->sfr_hooks[idx].write(cpu, addr, value, user);
         return;
     }
     cpu->sfr[idx] = value;
@@ -475,7 +479,13 @@ void cpu_run(cpu_t *cpu, uint64_t max_steps)
         if (max_steps != 0 && steps >= max_steps) {
             break;
         }
-        cpu_step(cpu);
+        uint8_t cycles = cpu_step(cpu);
+        if (cycles == 0) {
+            break;
+        }
+        if (cpu->tick_fn) {
+            cpu->tick_fn(cpu, cycles, cpu->tick_user);
+        }
         steps++;
     }
 }
@@ -505,6 +515,9 @@ void cpu_run_timed(cpu_t *cpu,
         if (cycles == 0) {
             break;
         }
+        if (cpu->tick_fn) {
+            cpu->tick_fn(cpu, cycles, cpu->tick_user);
+        }
         timing_step(timing_state, cycles);
         steps++;
 
@@ -526,7 +539,7 @@ void cpu_set_trace(cpu_t *cpu, bool enabled, cpu_trace_fn fn, void *user)
     cpu->trace_user = user;
 }
 
-void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_hook write)
+void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_hook write, void *user)
 {
     if (addr < 0x80) {
         return;
@@ -534,6 +547,7 @@ void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_ho
     uint8_t idx = (uint8_t)(addr - 0x80);
     cpu->sfr_hooks[idx].read = read;
     cpu->sfr_hooks[idx].write = write;
+    cpu->sfr_hooks[idx].user = user;
 }
 
 void cpu_set_sfr_user(cpu_t *cpu, void *user)
@@ -552,6 +566,12 @@ void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, const void *user)
         cpu->mem_ops.xdata_write = NULL;
     }
     cpu->mem_user = (void *)user;
+}
+
+void cpu_set_tick_hook(cpu_t *cpu, cpu_tick_fn fn, void *user)
+{
+    cpu->tick_fn = fn;
+    cpu->tick_user = user;
 }
 
 void cpu_set_carry(cpu_t *cpu, bool value)

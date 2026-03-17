@@ -10,7 +10,7 @@
         "request": "launch",
         "program": "${workspaceFolder}/build/mcs51_emulator",
         "args": [
-            "mc51code/add_loop.hex",
+            "mc51code/serial_hello.hex",
             "--trace"
         ],
         "stopAtEntry": false,

@@ -4,6 +4,7 @@
 #include "mem_map.h"
 #include "hex_loader.h"
 #include "timing.h"
+#include "uart.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -93,6 +94,21 @@ static const cpu_time_iface_t time_iface = {
     .sleep_ns = posix_sleep_ns,
     .user = NULL,
 };
+static uart_t uart;
+
+static void uart_tx_stdout(uint8_t byte, void *user)
+{
+    FILE *out = user ? (FILE *)user : stdout;
+    fputc((int)byte, out);
+    fflush(out);
+}
+
+static void tick_hook(cpu_t *cpu, uint32_t cycles, void *user)
+{
+    (void)cpu;
+    uart_t *u = (uart_t *)user;
+    uart_tick(u, cycles);
+}
 
 int main(int argc, char **argv)
 {
@@ -105,6 +121,11 @@ int main(int argc, char **argv)
     mem_map_attach(&cpu, &mem);
     memset(code8k, 0xFF, sizeof(code8k));
     memset(xdata8k, 0x00, sizeof(xdata8k));
+
+    uart_init(&uart, &timing_cfg);
+    uart_set_tx_callback(&uart, uart_tx_stdout, stdout);
+    uart_attach(&cpu, &uart);
+    cpu_set_tick_hook(&cpu, tick_hook, &uart);
 
     if (!hex_load_file(&cpu, argv[1])) {
         fprintf(stderr, "Failed to load HEX file: %s\n", argv[1]);
