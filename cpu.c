@@ -252,10 +252,10 @@ void cpu_write_bit(cpu_t *cpu, uint8_t bit_addr, bool value)
     cpu_write_direct(cpu, byte_addr, current);
 }
 
-bool cpu_step(cpu_t *cpu)
+uint8_t cpu_step(cpu_t *cpu)
 {
     if (cpu->halted) {
-        return false;
+        return 0;
     }
 
     uint16_t pc_before = cpu->pc;
@@ -266,8 +266,9 @@ bool cpu_step(cpu_t *cpu)
     if (desc.mnemonic == MN_INVALID) {
         cpu->halted = true;
         cpu->halt_reason = "UNDEFINED";
-        return false;
+        return 0;
     }
+    uint8_t cycles = desc.cycles;
 
     if (cpu->trace_enabled && cpu->trace_fn) {
         cpu->trace_fn(cpu, pc_before, opcode, opcode_name(opcode), cpu->trace_user);
@@ -277,13 +278,13 @@ bool cpu_step(cpu_t *cpu)
         op_t src = fetch_operand(cpu, AM_DIRECT, opcode);
         op_t dst = fetch_operand(cpu, AM_DIRECT, opcode);
         exec_mov_direct_direct(cpu, src, dst);
-        return !cpu->halted;
+        return cpu->halted ? 0 : cycles;
     }
 
     if (desc.mnemonic == MN_MOV_DPTR_IMM) {
         uint16_t value = cpu_fetch16(cpu);
         exec_mov_dptr_imm(cpu, value);
-        return !cpu->halted;
+        return cpu->halted ? 0 : cycles;
     }
 
     if (desc.mnemonic == MN_CJNE_A_IMM ||
@@ -317,7 +318,7 @@ bool cpu_step(cpu_t *cpu)
             cpu->halted = true;
             break;
         }
-        return !cpu->halted;
+        return cpu->halted ? 0 : cycles;
     }
 
     op_t dst = fetch_operand(cpu, desc.dst_mode, opcode);
@@ -472,7 +473,7 @@ bool cpu_step(cpu_t *cpu)
     if (!cpu->halted) {
         cpu_update_parity(cpu);
     }
-    return !cpu->halted;
+    return cpu->halted ? 0 : cycles;
 }
 
 void cpu_run(cpu_t *cpu, uint64_t max_steps)
@@ -484,6 +485,41 @@ void cpu_run(cpu_t *cpu, uint64_t max_steps)
         }
         cpu_step(cpu);
         steps++;
+    }
+}
+
+void cpu_run_timed(cpu_t *cpu, uint64_t max_steps, timing_t *timing, const cpu_time_iface_t *time_iface)
+{
+    if (!timing) {
+        cpu_run(cpu, max_steps);
+        return;
+    }
+
+    uint64_t steps = 0;
+    uint64_t start_ns = 0;
+    if (time_iface && time_iface->now_ns) {
+        start_ns = time_iface->now_ns(time_iface->user);
+    }
+
+    while (!cpu->halted) {
+        if (max_steps != 0 && steps >= max_steps) {
+            break;
+        }
+        uint8_t cycles = cpu_step(cpu);
+        if (cycles == 0) {
+            break;
+        }
+        timing_step(timing, cycles);
+        steps++;
+
+        if (time_iface && time_iface->now_ns && time_iface->sleep_ns) {
+            uint64_t now_ns = time_iface->now_ns(time_iface->user);
+            uint64_t target_ns = timing_cycles_to_ns(timing, timing->cycles_total);
+            uint64_t elapsed_ns = now_ns - start_ns;
+            if (target_ns > elapsed_ns) {
+                time_iface->sleep_ns(target_ns - elapsed_ns, time_iface->user);
+            }
+        }
     }
 }
 

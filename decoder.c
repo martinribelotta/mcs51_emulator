@@ -9,10 +9,37 @@ static uint8_t reg_bank_base(cpu_t *cpu)
 }
 
 static const instr_desc_t k_instr_table[256] = {
-#define X(op, mn, dst, src, size, name) [op] = { mn, dst, src, size },
+#define X(op, mn, dst, src, size, name) [op] = { mn, dst, src, size, 1 },
     INSTR_LIST(X)
 #undef X
 };
+
+static uint8_t opcode_cycles(uint8_t opcode)
+{
+    switch (opcode) {
+    case 0x01: case 0x02: case 0x10: case 0x11: case 0x12:
+    case 0x20: case 0x21: case 0x22: case 0x30: case 0x31: case 0x32:
+    case 0x40: case 0x41: case 0x43: case 0x50: case 0x51: case 0x53:
+    case 0x60: case 0x61: case 0x63: case 0x70: case 0x71: case 0x72:
+    case 0x73: case 0x75: case 0x80: case 0x81: case 0x82: case 0x83:
+    case 0x85: case 0x86: case 0x87: case 0x88: case 0x89: case 0x8A:
+    case 0x8B: case 0x8C: case 0x8D: case 0x8E: case 0x8F: case 0x90:
+    case 0x91: case 0x92: case 0x93: case 0xA0: case 0xA1: case 0xA3:
+    case 0xA6: case 0xA7: case 0xA8: case 0xA9: case 0xAA: case 0xAB:
+    case 0xAC: case 0xAD: case 0xAE: case 0xAF: case 0xB0: case 0xB1:
+    case 0xB4: case 0xB5: case 0xB6: case 0xB7: case 0xB8: case 0xB9:
+    case 0xBA: case 0xBB: case 0xBC: case 0xBD: case 0xBE: case 0xBF:
+    case 0xC0: case 0xC1: case 0xD0: case 0xD1: case 0xD5: case 0xD8:
+    case 0xD9: case 0xDA: case 0xDB: case 0xDC: case 0xDD: case 0xDE:
+    case 0xDF: case 0xE0: case 0xE1: case 0xE2: case 0xE3: case 0xF0:
+    case 0xF1: case 0xF2: case 0xF3:
+        return 2;
+    case 0x84: case 0xA4:
+        return 4;
+    default:
+        return 1;
+    }
+}
 
 static const char *const k_opcode_names[256] = {
 #define X(op, mn, dst, src, size, name) [op] = name,
@@ -84,6 +111,9 @@ instr_desc_t decode(uint8_t opcode)
         desc.size = 1;
         desc.dst_mode = AM_NONE;
         desc.src_mode = AM_NONE;
+        desc.cycles = 1;
+    } else {
+        desc.cycles = opcode_cycles(opcode);
     }
     return desc;
 }

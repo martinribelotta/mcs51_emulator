@@ -1,10 +1,15 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "cpu.h"
 #include "mem_map.h"
 #include "hex_loader.h"
+#include "timing.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <errno.h>
 
 bool hex_load_file(cpu_t *cpu, const char *path);
 
@@ -41,6 +46,28 @@ static void trace_stdout(cpu_t *cpu, uint16_t pc, uint8_t opcode, const char *na
 static void print_usage(const char *prog)
 {
     printf("Usage: %s <firmware.hex> [max_steps] [--trace]\n", prog);
+}
+
+static uint64_t posix_now_ns(void *user)
+{
+    (void)user;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+static void posix_sleep_ns(uint64_t ns, void *user)
+{
+    (void)user;
+    if (ns == 0) {
+        return;
+    }
+    struct timespec req;
+    req.tv_sec = (time_t)(ns / 1000000000ull);
+    req.tv_nsec = (long)(ns % 1000000000ull);
+    while (nanosleep(&req, &req) == -1 && errno == EINTR) {
+        continue;
+    }
 }
 
 int main(int argc, char **argv)
@@ -96,7 +123,14 @@ int main(int argc, char **argv)
         }
     }
 
-    cpu_run(&cpu, max_steps);
+    timing_t timing;
+    timing_init(&timing, 12000000u, 12);
+    cpu_time_iface_t time_iface = {
+        .now_ns = posix_now_ns,
+        .sleep_ns = posix_sleep_ns,
+        .user = NULL,
+    };
+    cpu_run_timed(&cpu, max_steps, &timing, &time_iface);
 
     if (cpu.halted) {
         if (cpu.halt_reason) {

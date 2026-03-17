@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "timing.h"
+
 typedef struct cpu cpu_t;
 typedef void (*cpu_trace_fn)(cpu_t *cpu, uint16_t pc, uint8_t opcode, const char *name, void *user);
 typedef uint8_t (*cpu_code_read_fn)(const cpu_t *cpu, uint16_t addr, void *user);
@@ -18,6 +20,15 @@ typedef struct {
     cpu_xdata_read_fn xdata_read;
     cpu_xdata_write_fn xdata_write;
 } cpu_mem_ops_t;
+
+typedef uint64_t (*cpu_time_now_ns_fn)(void *user);
+typedef void (*cpu_time_sleep_ns_fn)(uint64_t ns, void *user);
+
+typedef struct {
+    cpu_time_now_ns_fn now_ns;
+    cpu_time_sleep_ns_fn sleep_ns;
+    void *user;
+} cpu_time_iface_t;
 
 typedef uint8_t (*sfr_read_hook)(const cpu_t *cpu, uint8_t addr, void *user);
 typedef void (*sfr_write_hook)(cpu_t *cpu, uint8_t addr, uint8_t value, void *user);
@@ -68,8 +79,9 @@ void cpu_write_direct(cpu_t *cpu, uint8_t addr, uint8_t value);
 uint8_t cpu_read_bit(cpu_t *cpu, uint8_t bit_addr);
 void cpu_write_bit(cpu_t *cpu, uint8_t bit_addr, bool value);
 
-bool cpu_step(cpu_t *cpu);
+uint8_t cpu_step(cpu_t *cpu);
 void cpu_run(cpu_t *cpu, uint64_t max_steps);
+void cpu_run_timed(cpu_t *cpu, uint64_t max_steps, timing_t *timing, const cpu_time_iface_t *time_iface);
 void cpu_set_trace(cpu_t *cpu, bool enabled, cpu_trace_fn fn, void *user);
 void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_hook write);
 void cpu_set_sfr_user(cpu_t *cpu, void *user);

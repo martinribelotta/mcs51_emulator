@@ -87,6 +87,7 @@ typedef struct {
     addr_mode_t dst_mode;
     addr_mode_t src_mode;
     uint8_t size;
+    uint8_t cycles;
 } instr_desc_t;
 
 instr_desc_t decode(uint8_t opcode);
