@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#define MCS51_ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+
 #include "timing.h"
 
 typedef struct cpu cpu_t;

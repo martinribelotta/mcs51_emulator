@@ -126,7 +126,7 @@ const char *opcode_name(uint8_t opcode)
 
 const char *mnemonic_name(mnemonic_t mnemonic)
 {
-    if (mnemonic < 0 || (size_t)mnemonic >= (sizeof(k_mnemonic_names) / sizeof(k_mnemonic_names[0]))) {
+    if (mnemonic < 0 || (size_t)mnemonic >= MCS51_ARRAY_LEN(k_mnemonic_names)) {
         return "INVALID";
     }
     return k_mnemonic_names[mnemonic];

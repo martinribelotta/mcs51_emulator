@@ -746,7 +746,7 @@ static bool cpu_interrupt_pending(cpu_t *cpu, int src, uint8_t *out_prio, uint16
 static void cpu_service_interrupt(cpu_t *cpu, int src, uint8_t prio, uint16_t vector)
 {
     if (cpu->in_isr) {
-        if (cpu->isr_depth < (sizeof(cpu->isr_stack) / sizeof(cpu->isr_stack[0]))) {
+        if (cpu->isr_depth < MCS51_ARRAY_LEN(cpu->isr_stack)) {
             cpu->isr_stack[cpu->isr_depth++] = cpu->isr_prio;
         }
     }

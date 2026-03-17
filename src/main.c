@@ -98,6 +98,14 @@ static const cpu_time_iface_t time_iface = {
 static uart_t uart;
 static timers_t timers;
 
+static void timers_tick_hook(cpu_t *cpu, uint32_t cycles, void *user);
+static void uart_tick_hook(cpu_t *cpu, uint32_t cycles, void *user);
+
+static const cpu_tick_entry_t tick_hooks[] = {
+    { timers_tick_hook, &timers },
+    { uart_tick_hook, &uart },
+};
+
 static void uart_tx_stdout(uint8_t byte, void *user)
 {
     FILE *out = user ? (FILE *)user : stdout;
@@ -135,11 +143,7 @@ int main(int argc, char **argv)
     uart_set_tx_callback(&uart, uart_tx_stdout, stdout);
     uart_attach(&cpu, &uart);
     timers_init(&timers, &cpu);
-    const cpu_tick_entry_t tick_hooks[] = {
-        { timers_tick_hook, &timers },
-        { uart_tick_hook, &uart },
-    };
-    cpu_set_tick_hooks(&cpu, tick_hooks, (uint8_t)(sizeof(tick_hooks) / sizeof(tick_hooks[0])));
+    cpu_set_tick_hooks(&cpu, tick_hooks, (uint8_t)MCS51_ARRAY_LEN(tick_hooks));
 
     if (!hex_load_file(&cpu, argv[1])) {
         fprintf(stderr, "Failed to load HEX file: %s\n", argv[1]);
