@@ -368,6 +368,7 @@ void exec_ret(cpu_t *cpu)
 void exec_reti(cpu_t *cpu)
 {
     exec_ret(cpu);
+    cpu_on_reti(cpu);
 }
 
 void exec_push(cpu_t *cpu, op_t direct)

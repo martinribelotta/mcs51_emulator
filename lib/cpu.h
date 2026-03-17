@@ -80,11 +80,25 @@ struct cpu {
 
     cpu_tick_fn tick_fn;
     void *tick_user;
+
+    bool in_isr;
+    uint8_t isr_prio;
+    uint8_t isr_stack[2];
+    uint8_t isr_depth;
+
+    bool int0_level;
+    bool int1_level;
+    bool int0_prev_level;
+    bool int1_prev_level;
 };
 
 // CPU_INIT_TEMPLATE_INIT: initializer for static CPU templates with default SFR hooks.
 #define CPU_INIT_TEMPLATE_INIT { \
     .sp = 0x07, \
+    .int0_level = true, \
+    .int1_level = true, \
+    .int0_prev_level = true, \
+    .int1_prev_level = true, \
     .sfr_hooks = { \
         [0xE0 - 0x80] = { cpu_sfr_read_acc, cpu_sfr_write_acc, NULL }, \
         [0xF0 - 0x80] = { cpu_sfr_read_b, cpu_sfr_write_b, NULL }, \
@@ -132,6 +146,9 @@ void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_ho
 void cpu_set_sfr_user(cpu_t *cpu, void *user);
 void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, const void *user);
 void cpu_set_tick_hook(cpu_t *cpu, cpu_tick_fn fn, void *user);
+void cpu_set_int0_level(cpu_t *cpu, bool level);
+void cpu_set_int1_level(cpu_t *cpu, bool level);
+void cpu_on_reti(cpu_t *cpu);
 
 void cpu_set_carry(cpu_t *cpu, bool value);
 bool cpu_get_carry(const cpu_t *cpu);

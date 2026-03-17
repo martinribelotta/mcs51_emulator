@@ -13,9 +13,48 @@
 #define SFR_SP   0x81
 #define SFR_DPL  0x82
 #define SFR_DPH  0x83
+#define SFR_TCON 0x88
 #define SFR_PSW  0xD0
+#define SFR_IE   0xA8
+#define SFR_IP   0xB8
 #define SFR_ACC  0xE0
 #define SFR_B    0xF0
+
+#define IE_EA  0x80
+#define IE_EX0 0x01
+#define IE_ET0 0x02
+#define IE_EX1 0x04
+#define IE_ET1 0x08
+#define IE_ES  0x10
+
+#define IP_PX0 0x01
+#define IP_PT0 0x02
+#define IP_PX1 0x04
+#define IP_PT1 0x08
+#define IP_PS  0x10
+
+#define TCON_IT0 0x01
+#define TCON_IE0 0x02
+#define TCON_IT1 0x04
+#define TCON_IE1 0x08
+#define TCON_TF0 0x20
+#define TCON_TF1 0x80
+
+#define SFR_SCON 0x98
+#define SCON_RI  0x01
+#define SCON_TI  0x02
+
+static void cpu_check_interrupts(cpu_t *cpu);
+
+static uint8_t sfr_get(const cpu_t *cpu, uint8_t addr)
+{
+    return cpu->sfr[(uint8_t)(addr - 0x80)];
+}
+
+static void sfr_set(cpu_t *cpu, uint8_t addr, uint8_t value)
+{
+    cpu->sfr[(uint8_t)(addr - 0x80)] = value;
+}
 
 static void cpu_update_parity(cpu_t *cpu)
 {
@@ -138,6 +177,10 @@ void cpu_reset(cpu_t *cpu)
     reset.mem_user = cpu->mem_user;
     reset.tick_fn = cpu->tick_fn;
     reset.tick_user = cpu->tick_user;
+    reset.int0_level = cpu->int0_level;
+    reset.int1_level = cpu->int1_level;
+    reset.int0_prev_level = cpu->int0_prev_level;
+    reset.int1_prev_level = cpu->int1_prev_level;
     *cpu = reset;
 }
 
@@ -469,6 +512,9 @@ uint8_t cpu_step(cpu_t *cpu)
     if (!cpu->halted) {
         cpu_update_parity(cpu);
     }
+    if (!cpu->halted) {
+        cpu_check_interrupts(cpu);
+    }
     return cpu->halted ? 0 : cycles;
 }
 
@@ -572,6 +618,197 @@ void cpu_set_tick_hook(cpu_t *cpu, cpu_tick_fn fn, void *user)
 {
     cpu->tick_fn = fn;
     cpu->tick_user = user;
+}
+
+void cpu_set_int0_level(cpu_t *cpu, bool level)
+{
+    if (!cpu) {
+        return;
+    }
+    uint8_t tcon = sfr_get(cpu, SFR_TCON);
+    bool it0 = (tcon & TCON_IT0) != 0;
+    if (it0) {
+        if (cpu->int0_prev_level && !level) {
+            tcon |= TCON_IE0;
+        }
+        cpu->int0_prev_level = level;
+    } else {
+        if (level) {
+            tcon &= (uint8_t)~TCON_IE0;
+        } else {
+            tcon |= TCON_IE0;
+        }
+    }
+    cpu->int0_level = level;
+    sfr_set(cpu, SFR_TCON, tcon);
+}
+
+void cpu_set_int1_level(cpu_t *cpu, bool level)
+{
+    if (!cpu) {
+        return;
+    }
+    uint8_t tcon = sfr_get(cpu, SFR_TCON);
+    bool it1 = (tcon & TCON_IT1) != 0;
+    if (it1) {
+        if (cpu->int1_prev_level && !level) {
+            tcon |= TCON_IE1;
+        }
+        cpu->int1_prev_level = level;
+    } else {
+        if (level) {
+            tcon &= (uint8_t)~TCON_IE1;
+        } else {
+            tcon |= TCON_IE1;
+        }
+    }
+    cpu->int1_level = level;
+    sfr_set(cpu, SFR_TCON, tcon);
+}
+
+void cpu_on_reti(cpu_t *cpu)
+{
+    if (!cpu) {
+        return;
+    }
+    if (cpu->isr_depth > 0) {
+        cpu->isr_depth--;
+        cpu->isr_prio = cpu->isr_stack[cpu->isr_depth];
+        cpu->in_isr = true;
+    } else {
+        cpu->in_isr = false;
+        cpu->isr_prio = 0;
+    }
+}
+
+static bool cpu_interrupt_pending(cpu_t *cpu, int src, uint8_t *out_prio, uint16_t *out_vector)
+{
+    uint8_t ie = sfr_get(cpu, SFR_IE);
+    uint8_t ip = sfr_get(cpu, SFR_IP);
+    uint8_t tcon = sfr_get(cpu, SFR_TCON);
+    uint8_t scon = sfr_get(cpu, SFR_SCON);
+
+    if ((ie & IE_EA) == 0) {
+        return false;
+    }
+
+    switch (src) {
+    case 0: { /* INT0 */
+        if ((ie & IE_EX0) && (tcon & TCON_IE0)) {
+            *out_prio = (ip & IP_PX0) ? 1u : 0u;
+            *out_vector = 0x0003;
+            return true;
+        }
+        break; }
+    case 1: { /* T0 */
+        if ((ie & IE_ET0) && (tcon & TCON_TF0)) {
+            *out_prio = (ip & IP_PT0) ? 1u : 0u;
+            *out_vector = 0x000B;
+            return true;
+        }
+        break; }
+    case 2: { /* INT1 */
+        if ((ie & IE_EX1) && (tcon & TCON_IE1)) {
+            *out_prio = (ip & IP_PX1) ? 1u : 0u;
+            *out_vector = 0x0013;
+            return true;
+        }
+        break; }
+    case 3: { /* T1 */
+        if ((ie & IE_ET1) && (tcon & TCON_TF1)) {
+            *out_prio = (ip & IP_PT1) ? 1u : 0u;
+            *out_vector = 0x001B;
+            return true;
+        }
+        break; }
+    case 4: { /* SERIAL */
+        if ((ie & IE_ES) && (scon & (SCON_RI | SCON_TI))) {
+            *out_prio = (ip & IP_PS) ? 1u : 0u;
+            *out_vector = 0x0023;
+            return true;
+        }
+        break; }
+    default:
+        break;
+    }
+    return false;
+}
+
+static void cpu_service_interrupt(cpu_t *cpu, int src, uint8_t prio, uint16_t vector)
+{
+    if (cpu->in_isr) {
+        if (cpu->isr_depth < (sizeof(cpu->isr_stack) / sizeof(cpu->isr_stack[0]))) {
+            cpu->isr_stack[cpu->isr_depth++] = cpu->isr_prio;
+        }
+    }
+    cpu->in_isr = true;
+    cpu->isr_prio = prio;
+
+    uint16_t ret = cpu->pc;
+    cpu->sp++;
+    cpu->iram[cpu->sp] = (uint8_t)(ret & 0xFF);
+    cpu->sp++;
+    cpu->iram[cpu->sp] = (uint8_t)(ret >> 8);
+    cpu->pc = vector;
+
+    uint8_t tcon = sfr_get(cpu, SFR_TCON);
+    switch (src) {
+    case 0: { /* INT0 */
+        if (tcon & TCON_IT0) {
+            tcon &= (uint8_t)~TCON_IE0;
+        }
+        sfr_set(cpu, SFR_TCON, tcon);
+        break; }
+    case 1: { /* T0 */
+        tcon &= (uint8_t)~TCON_TF0;
+        sfr_set(cpu, SFR_TCON, tcon);
+        break; }
+    case 2: { /* INT1 */
+        if (tcon & TCON_IT1) {
+            tcon &= (uint8_t)~TCON_IE1;
+        }
+        sfr_set(cpu, SFR_TCON, tcon);
+        break; }
+    case 3: { /* T1 */
+        tcon &= (uint8_t)~TCON_TF1;
+        sfr_set(cpu, SFR_TCON, tcon);
+        break; }
+    case 4: { /* SERIAL */
+        break; }
+    default:
+        break;
+    }
+}
+
+static void cpu_check_interrupts(cpu_t *cpu)
+{
+    if (!cpu) {
+        return;
+    }
+
+    uint8_t best_prio = 0;
+    uint16_t best_vec = 0;
+    int best_src = -1;
+
+    for (int src = 0; src < 5; ++src) {
+        uint8_t prio = 0;
+        uint16_t vec = 0;
+        if (!cpu_interrupt_pending(cpu, src, &prio, &vec)) {
+            continue;
+        }
+        if (cpu->in_isr && prio <= cpu->isr_prio) {
+            continue;
+        }
+        if (best_src < 0 || prio > best_prio) {
+            best_src = src;
+            best_prio = prio;
+            best_vec = vec;
+        }
+    }
+
+    if (best_src >= 0) {
+        cpu_service_interrupt(cpu, best_src, best_prio, best_vec);
+    }
 }
 
 void cpu_set_carry(cpu_t *cpu, bool value)
