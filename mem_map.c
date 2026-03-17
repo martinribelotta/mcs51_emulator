@@ -22,7 +22,7 @@ static const mem_map_region_t *find_region(const mem_map_region_t *regions, size
 
 static uint8_t code_read_map(const cpu_t *cpu, uint16_t addr, void *user)
 {
-    mem_map_t *mem = (mem_map_t *)user;
+    const mem_map_t *mem = (const mem_map_t *)user;
     const mem_map_region_t *region = mem_map_find_code_region(mem, addr);
     if (region && region->read) {
         return region->read(cpu, addr, region->user);
@@ -32,7 +32,7 @@ static uint8_t code_read_map(const cpu_t *cpu, uint16_t addr, void *user)
 
 static void code_write_map(cpu_t *cpu, uint16_t addr, uint8_t value, void *user)
 {
-    mem_map_t *mem = (mem_map_t *)user;
+    const mem_map_t *mem = (const mem_map_t *)user;
     const mem_map_region_t *region = mem_map_find_code_region(mem, addr);
     if (region && region->write) {
         region->write(cpu, addr, value, region->user);
@@ -41,7 +41,7 @@ static void code_write_map(cpu_t *cpu, uint16_t addr, uint8_t value, void *user)
 
 static uint8_t xdata_read_map(const cpu_t *cpu, uint16_t addr, void *user)
 {
-    mem_map_t *mem = (mem_map_t *)user;
+    const mem_map_t *mem = (const mem_map_t *)user;
     const mem_map_region_t *region = mem_map_find_xdata_region(mem, addr);
     if (region && region->read) {
         return region->read(cpu, addr, region->user);
@@ -51,37 +51,11 @@ static uint8_t xdata_read_map(const cpu_t *cpu, uint16_t addr, void *user)
 
 static void xdata_write_map(cpu_t *cpu, uint16_t addr, uint8_t value, void *user)
 {
-    mem_map_t *mem = (mem_map_t *)user;
+    const mem_map_t *mem = (const mem_map_t *)user;
     const mem_map_region_t *region = mem_map_find_xdata_region(mem, addr);
     if (region && region->write) {
         region->write(cpu, addr, value, region->user);
     }
-}
-
-void mem_map_init(mem_map_t *mem)
-{
-    if (!mem) {
-        return;
-    }
-    memset(mem, 0, sizeof(*mem));
-}
-
-void mem_map_set_code_regions(mem_map_t *mem, const mem_map_region_t *regions, size_t region_count)
-{
-    if (!mem) {
-        return;
-    }
-    mem->code_regions = regions;
-    mem->code_region_count = region_count;
-}
-
-void mem_map_set_xdata_regions(mem_map_t *mem, const mem_map_region_t *regions, size_t region_count)
-{
-    if (!mem) {
-        return;
-    }
-    mem->xdata_regions = regions;
-    mem->xdata_region_count = region_count;
 }
 
 const mem_map_region_t *mem_map_find_code_region(const mem_map_t *mem, uint16_t addr)
@@ -100,7 +74,7 @@ const mem_map_region_t *mem_map_find_xdata_region(const mem_map_t *mem, uint16_t
     return find_region(mem->xdata_regions, mem->xdata_region_count, addr);
 }
 
-void mem_map_attach(cpu_t *cpu, mem_map_t *mem)
+void mem_map_attach(cpu_t *cpu, const mem_map_t *mem)
 {
     cpu_mem_ops_t ops;
     ops.code_read = code_read_map;

@@ -30,121 +30,113 @@ static void cpu_update_parity(cpu_t *cpu)
     }
 }
 
-static uint8_t sfr_read_acc(const cpu_t *cpu, uint8_t addr, void *user)
+uint8_t cpu_sfr_read_acc(const cpu_t *cpu, uint8_t addr, void *user)
 {
     (void)addr;
     (void)user;
     return cpu->acc;
 }
 
-static void sfr_write_acc(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+void cpu_sfr_write_acc(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
 {
     (void)addr;
     (void)user;
     cpu->acc = value;
 }
 
-static uint8_t sfr_read_b(const cpu_t *cpu, uint8_t addr, void *user)
+uint8_t cpu_sfr_read_b(const cpu_t *cpu, uint8_t addr, void *user)
 {
     (void)addr;
     (void)user;
     return cpu->b;
 }
 
-static void sfr_write_b(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+void cpu_sfr_write_b(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
 {
     (void)addr;
     (void)user;
     cpu->b = value;
 }
 
-static uint8_t sfr_read_psw(const cpu_t *cpu, uint8_t addr, void *user)
+uint8_t cpu_sfr_read_psw(const cpu_t *cpu, uint8_t addr, void *user)
 {
     (void)addr;
     (void)user;
     return cpu->psw;
 }
 
-static void sfr_write_psw(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+void cpu_sfr_write_psw(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
 {
     (void)addr;
     (void)user;
     cpu->psw = value;
 }
 
-static uint8_t sfr_read_sp(const cpu_t *cpu, uint8_t addr, void *user)
+uint8_t cpu_sfr_read_sp(const cpu_t *cpu, uint8_t addr, void *user)
 {
     (void)addr;
     (void)user;
     return cpu->sp;
 }
 
-static void sfr_write_sp(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+void cpu_sfr_write_sp(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
 {
     (void)addr;
     (void)user;
     cpu->sp = value;
 }
 
-static uint8_t sfr_read_dpl(const cpu_t *cpu, uint8_t addr, void *user)
+uint8_t cpu_sfr_read_dpl(const cpu_t *cpu, uint8_t addr, void *user)
 {
     (void)addr;
     (void)user;
     return (uint8_t)(cpu->dptr & 0xFF);
 }
 
-static uint8_t sfr_read_dph(const cpu_t *cpu, uint8_t addr, void *user)
+uint8_t cpu_sfr_read_dph(const cpu_t *cpu, uint8_t addr, void *user)
 {
     (void)addr;
     (void)user;
     return (uint8_t)(cpu->dptr >> 8);
 }
 
-static void sfr_write_dpl(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+void cpu_sfr_write_dpl(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
 {
     (void)addr;
     (void)user;
     cpu->dptr = (uint16_t)((cpu->dptr & 0xFF00) | value);
 }
 
-static void sfr_write_dph(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+void cpu_sfr_write_dph(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
 {
     (void)addr;
     (void)user;
     cpu->dptr = (uint16_t)((cpu->dptr & 0x00FF) | ((uint16_t)value << 8));
 }
 
+const cpu_t CPU_INIT_TEMPLATE_CONST = CPU_INIT_TEMPLATE_INIT;
+
 void cpu_init(cpu_t *cpu)
 {
-    memset(cpu, 0, sizeof(*cpu));
-    cpu_set_sfr_hook(cpu, SFR_ACC, sfr_read_acc, sfr_write_acc);
-    cpu_set_sfr_hook(cpu, SFR_B, sfr_read_b, sfr_write_b);
-    cpu_set_sfr_hook(cpu, SFR_PSW, sfr_read_psw, sfr_write_psw);
-    cpu_set_sfr_hook(cpu, SFR_SP, sfr_read_sp, sfr_write_sp);
-    cpu_set_sfr_hook(cpu, SFR_DPL, sfr_read_dpl, sfr_write_dpl);
-    cpu_set_sfr_hook(cpu, SFR_DPH, sfr_read_dph, sfr_write_dph);
-    cpu->mem_ops.code_read = NULL;
-    cpu->mem_ops.code_write = NULL;
-    cpu->mem_ops.xdata_read = NULL;
-    cpu->mem_ops.xdata_write = NULL;
-    cpu->mem_user = NULL;
-    cpu_reset(cpu);
+    if (!cpu) {
+        return;
+    }
+    *cpu = CPU_INIT_TEMPLATE;
 }
 
 void cpu_reset(cpu_t *cpu)
 {
-    cpu->acc = 0;
-    cpu->b = 0;
-    cpu->psw = 0;
-    cpu->sp = 0x07;
-    cpu->dptr = 0;
-    cpu->pc = 0;
-    cpu->halted = false;
-    cpu->last_opcode = 0x00;
-    cpu->halt_reason = NULL;
-    cpu->trace_enabled = false;
-    cpu->trace_fn = NULL;
-    cpu->trace_user = NULL;
+    if (!cpu) {
+        return;
+    }
+    cpu_t reset = CPU_RESET_TEMPLATE;
+    memcpy(reset.iram, cpu->iram, sizeof(cpu->iram));
+    memcpy(reset.sfr, cpu->sfr, sizeof(cpu->sfr));
+    memcpy(reset.sfr_hooks, cpu->sfr_hooks, sizeof(cpu->sfr_hooks));
+    reset.sfr_user = cpu->sfr_user;
+    reset.mem_ops = cpu->mem_ops;
+    reset.mem_user = cpu->mem_user;
+    *cpu = reset;
 }
 
 uint8_t cpu_fetch8(cpu_t *cpu)
@@ -488,9 +480,13 @@ void cpu_run(cpu_t *cpu, uint64_t max_steps)
     }
 }
 
-void cpu_run_timed(cpu_t *cpu, uint64_t max_steps, timing_t *timing, const cpu_time_iface_t *time_iface)
+void cpu_run_timed(cpu_t *cpu,
+                   uint64_t max_steps,
+                   const timing_config_t *timing_cfg,
+                   timing_state_t *timing_state,
+                   const cpu_time_iface_t *time_iface)
 {
-    if (!timing) {
+    if (!timing_cfg || !timing_state) {
         cpu_run(cpu, max_steps);
         return;
     }
@@ -509,12 +505,12 @@ void cpu_run_timed(cpu_t *cpu, uint64_t max_steps, timing_t *timing, const cpu_t
         if (cycles == 0) {
             break;
         }
-        timing_step(timing, cycles);
+        timing_step(timing_state, cycles);
         steps++;
 
         if (time_iface && time_iface->now_ns && time_iface->sleep_ns) {
             uint64_t now_ns = time_iface->now_ns(time_iface->user);
-            uint64_t target_ns = timing_cycles_to_ns(timing, timing->cycles_total);
+            uint64_t target_ns = timing_cycles_to_ns(timing_cfg, timing_state->cycles_total);
             uint64_t elapsed_ns = now_ns - start_ns;
             if (target_ns > elapsed_ns) {
                 time_iface->sleep_ns(target_ns - elapsed_ns, time_iface->user);
@@ -545,7 +541,7 @@ void cpu_set_sfr_user(cpu_t *cpu, void *user)
     cpu->sfr_user = user;
 }
 
-void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, void *user)
+void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, const void *user)
 {
     if (ops) {
         cpu->mem_ops = *ops;
@@ -555,7 +551,7 @@ void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, void *user)
         cpu->mem_ops.xdata_read = NULL;
         cpu->mem_ops.xdata_write = NULL;
     }
-    cpu->mem_user = user;
+    cpu->mem_user = (void *)user;
 }
 
 void cpu_set_carry(cpu_t *cpu, bool value)

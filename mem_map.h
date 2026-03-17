@@ -24,11 +24,8 @@ typedef struct {
     size_t xdata_region_count;
 } mem_map_t;
 
-void mem_map_init(mem_map_t *mem);
-void mem_map_set_code_regions(mem_map_t *mem, const mem_map_region_t *regions, size_t region_count);
-void mem_map_set_xdata_regions(mem_map_t *mem, const mem_map_region_t *regions, size_t region_count);
 const mem_map_region_t *mem_map_find_code_region(const mem_map_t *mem, uint16_t addr);
 const mem_map_region_t *mem_map_find_xdata_region(const mem_map_t *mem, uint16_t addr);
-void mem_map_attach(cpu_t *cpu, mem_map_t *mem);
+void mem_map_attach(cpu_t *cpu, const mem_map_t *mem);
 
 #endif

@@ -33,6 +33,19 @@ typedef struct {
 typedef uint8_t (*sfr_read_hook)(const cpu_t *cpu, uint8_t addr, void *user);
 typedef void (*sfr_write_hook)(cpu_t *cpu, uint8_t addr, uint8_t value, void *user);
 
+uint8_t cpu_sfr_read_acc(const cpu_t *cpu, uint8_t addr, void *user);
+void cpu_sfr_write_acc(cpu_t *cpu, uint8_t addr, uint8_t value, void *user);
+uint8_t cpu_sfr_read_b(const cpu_t *cpu, uint8_t addr, void *user);
+void cpu_sfr_write_b(cpu_t *cpu, uint8_t addr, uint8_t value, void *user);
+uint8_t cpu_sfr_read_psw(const cpu_t *cpu, uint8_t addr, void *user);
+void cpu_sfr_write_psw(cpu_t *cpu, uint8_t addr, uint8_t value, void *user);
+uint8_t cpu_sfr_read_sp(const cpu_t *cpu, uint8_t addr, void *user);
+void cpu_sfr_write_sp(cpu_t *cpu, uint8_t addr, uint8_t value, void *user);
+uint8_t cpu_sfr_read_dpl(const cpu_t *cpu, uint8_t addr, void *user);
+void cpu_sfr_write_dpl(cpu_t *cpu, uint8_t addr, uint8_t value, void *user);
+uint8_t cpu_sfr_read_dph(const cpu_t *cpu, uint8_t addr, void *user);
+void cpu_sfr_write_dph(cpu_t *cpu, uint8_t addr, uint8_t value, void *user);
+
 typedef struct {
     sfr_read_hook read;
     sfr_write_hook write;
@@ -63,6 +76,28 @@ struct cpu {
     void *mem_user;
 };
 
+// CPU_INIT_TEMPLATE_INIT: initializer for static CPU templates with default SFR hooks.
+#define CPU_INIT_TEMPLATE_INIT { \
+    .sp = 0x07, \
+    .sfr_hooks = { \
+        [0xE0 - 0x80] = { cpu_sfr_read_acc, cpu_sfr_write_acc }, \
+        [0xF0 - 0x80] = { cpu_sfr_read_b, cpu_sfr_write_b }, \
+        [0xD0 - 0x80] = { cpu_sfr_read_psw, cpu_sfr_write_psw }, \
+        [0x81 - 0x80] = { cpu_sfr_read_sp, cpu_sfr_write_sp }, \
+        [0x82 - 0x80] = { cpu_sfr_read_dpl, cpu_sfr_write_dpl }, \
+        [0x83 - 0x80] = { cpu_sfr_read_dph, cpu_sfr_write_dph }, \
+    }, \
+}
+
+// CPU_INIT_TEMPLATE: canonical const template instance.
+extern const cpu_t CPU_INIT_TEMPLATE_CONST;
+#define CPU_INIT_TEMPLATE CPU_INIT_TEMPLATE_CONST
+
+// CPU_RESET_TEMPLATE: base values applied by cpu_reset (hooks/mem are preserved).
+#define CPU_RESET_TEMPLATE ((cpu_t){ \
+    .sp = 0x07, \
+})
+
 void cpu_init(cpu_t *cpu);
 void cpu_reset(cpu_t *cpu);
 
@@ -81,11 +116,15 @@ void cpu_write_bit(cpu_t *cpu, uint8_t bit_addr, bool value);
 
 uint8_t cpu_step(cpu_t *cpu);
 void cpu_run(cpu_t *cpu, uint64_t max_steps);
-void cpu_run_timed(cpu_t *cpu, uint64_t max_steps, timing_t *timing, const cpu_time_iface_t *time_iface);
+void cpu_run_timed(cpu_t *cpu,
+                   uint64_t max_steps,
+                   const timing_config_t *timing_cfg,
+                   timing_state_t *timing_state,
+                   const cpu_time_iface_t *time_iface);
 void cpu_set_trace(cpu_t *cpu, bool enabled, cpu_trace_fn fn, void *user);
 void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_hook write);
 void cpu_set_sfr_user(cpu_t *cpu, void *user);
-void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, void *user);
+void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, const void *user);
 
 void cpu_set_carry(cpu_t *cpu, bool value);
 bool cpu_get_carry(const cpu_t *cpu);

@@ -8,12 +8,33 @@ static int failures = 0;
 typedef struct {
     uint8_t code[65536];
     uint8_t xdata[65536];
-    mem_map_t map;
-    mem_map_region_t code_region;
-    mem_map_region_t xdata_region;
 } test_mem_t;
 
 static test_mem_t mem;
+static uint8_t test_code_read(const cpu_t *cpu, uint16_t addr, void *user);
+static void test_code_write(cpu_t *cpu, uint16_t addr, uint8_t value, void *user);
+static uint8_t test_xdata_read(const cpu_t *cpu, uint16_t addr, void *user);
+static void test_xdata_write(cpu_t *cpu, uint16_t addr, uint8_t value, void *user);
+static const mem_map_region_t code_region = {
+    .base = 0x0000,
+    .size = 65536u,
+    .read = test_code_read,
+    .write = test_code_write,
+    .user = mem.code,
+};
+static const mem_map_region_t xdata_region = {
+    .base = 0x0000,
+    .size = 65536u,
+    .read = test_xdata_read,
+    .write = test_xdata_write,
+    .user = mem.xdata,
+};
+static const mem_map_t const_map = {
+    .code_regions = &code_region,
+    .code_region_count = 1,
+    .xdata_regions = &xdata_region,
+    .xdata_region_count = 1,
+};
 
 static uint8_t test_code_read(const cpu_t *cpu, uint16_t addr, void *user)
 {
@@ -60,20 +81,7 @@ static void test_xdata_write(cpu_t *cpu, uint16_t addr, uint8_t value, void *use
 static void load_code(cpu_t *cpu, const uint8_t *code, size_t len)
 {
     cpu_init(cpu);
-    mem_map_init(&mem.map);
-    mem.code_region.base = 0x0000;
-    mem.code_region.size = 65536u;
-    mem.code_region.read = test_code_read;
-    mem.code_region.write = test_code_write;
-    mem.code_region.user = mem.code;
-    mem.xdata_region.base = 0x0000;
-    mem.xdata_region.size = 65536u;
-    mem.xdata_region.read = test_xdata_read;
-    mem.xdata_region.write = test_xdata_write;
-    mem.xdata_region.user = mem.xdata;
-    mem_map_set_code_regions(&mem.map, &mem.code_region, 1);
-    mem_map_set_xdata_regions(&mem.map, &mem.xdata_region, 1);
-    mem_map_attach(cpu, &mem.map);
+    mem_map_attach(cpu, &const_map);
     memset(mem.code, 0xFF, sizeof(mem.code));
     memset(mem.xdata, 0x00, sizeof(mem.xdata));
     memcpy(mem.code, code, len);

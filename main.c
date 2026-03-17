@@ -70,6 +70,30 @@ static void posix_sleep_ns(uint64_t ns, void *user)
     }
 }
 
+static const cpu_t cpu_template = CPU_INIT_TEMPLATE_INIT;
+static cpu_t cpu;
+static uint8_t code8k[RAM_8K_SIZE];
+static uint8_t xdata8k[RAM_8K_SIZE];
+static const mem_map_region_t code_regions[] = {
+    { .base = 0x0000, .size = RAM_8K_SIZE, .read = ram8k_read, .write = ram8k_write, .user = code8k },
+};
+static const mem_map_region_t xdata_regions[] = {
+    { .base = 0x0000, .size = RAM_8K_SIZE, .read = ram8k_read, .write = ram8k_write, .user = xdata8k },
+};
+static const mem_map_t mem = {
+    .code_regions = code_regions,
+    .code_region_count = 1,
+    .xdata_regions = xdata_regions,
+    .xdata_region_count = 1,
+};
+static const timing_config_t timing_cfg = { .fosc_hz = 12000000u, .clocks_per_cycle = 12 };
+static timing_state_t timing_state = { .cycles_total = 0 };
+static const cpu_time_iface_t time_iface = {
+    .now_ns = posix_now_ns,
+    .sleep_ns = posix_sleep_ns,
+    .user = NULL,
+};
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -77,32 +101,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    cpu_t cpu;
-    mem_map_t mem;
-    uint8_t code8k[RAM_8K_SIZE];
-    uint8_t xdata8k[RAM_8K_SIZE];
-    mem_map_region_t code_regions[] = {
-        {
-            .base = 0x0000,
-            .size = RAM_8K_SIZE,
-            .read = ram8k_read,
-            .write = ram8k_write,
-            .user = code8k,
-        },
-    };
-    mem_map_region_t xdata_regions[] = {
-        {
-            .base = 0x0000,
-            .size = RAM_8K_SIZE,
-            .read = ram8k_read,
-            .write = ram8k_write,
-            .user = xdata8k,
-        },
-    };
-    cpu_init(&cpu);
-    mem_map_init(&mem);
-    mem_map_set_code_regions(&mem, code_regions, sizeof(code_regions) / sizeof(code_regions[0]));
-    mem_map_set_xdata_regions(&mem, xdata_regions, sizeof(xdata_regions) / sizeof(xdata_regions[0]));
+    cpu = cpu_template;
     mem_map_attach(&cpu, &mem);
     memset(code8k, 0xFF, sizeof(code8k));
     memset(xdata8k, 0x00, sizeof(xdata8k));
@@ -123,14 +122,8 @@ int main(int argc, char **argv)
         }
     }
 
-    timing_t timing;
-    timing_init(&timing, 12000000u, 12);
-    cpu_time_iface_t time_iface = {
-        .now_ns = posix_now_ns,
-        .sleep_ns = posix_sleep_ns,
-        .user = NULL,
-    };
-    cpu_run_timed(&cpu, max_steps, &timing, &time_iface);
+    timing_reset(&timing_state);
+    cpu_run_timed(&cpu, max_steps, &timing_cfg, &timing_state, &time_iface);
 
     if (cpu.halted) {
         if (cpu.halt_reason) {
