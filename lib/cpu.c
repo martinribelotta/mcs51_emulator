@@ -175,8 +175,8 @@ void cpu_reset(cpu_t *cpu)
     reset.sfr_user = cpu->sfr_user;
     reset.mem_ops = cpu->mem_ops;
     reset.mem_user = cpu->mem_user;
-    reset.tick_fn = cpu->tick_fn;
-    reset.tick_user = cpu->tick_user;
+    reset.tick_hooks = cpu->tick_hooks;
+    reset.tick_hook_count = cpu->tick_hook_count;
     reset.int0_level = cpu->int0_level;
     reset.int1_level = cpu->int1_level;
     reset.int0_prev_level = cpu->int0_prev_level;
@@ -529,8 +529,11 @@ void cpu_run(cpu_t *cpu, uint64_t max_steps)
         if (cycles == 0) {
             break;
         }
-        if (cpu->tick_fn) {
-            cpu->tick_fn(cpu, cycles, cpu->tick_user);
+        for (uint8_t i = 0; i < cpu->tick_hook_count; ++i) {
+            const cpu_tick_entry_t *entry = &cpu->tick_hooks[i];
+            if (entry->fn) {
+                entry->fn(cpu, cycles, entry->user);
+            }
         }
         steps++;
     }
@@ -561,8 +564,11 @@ void cpu_run_timed(cpu_t *cpu,
         if (cycles == 0) {
             break;
         }
-        if (cpu->tick_fn) {
-            cpu->tick_fn(cpu, cycles, cpu->tick_user);
+        for (uint8_t i = 0; i < cpu->tick_hook_count; ++i) {
+            const cpu_tick_entry_t *entry = &cpu->tick_hooks[i];
+            if (entry->fn) {
+                entry->fn(cpu, cycles, entry->user);
+            }
         }
         timing_step(timing_state, cycles);
         steps++;
@@ -614,10 +620,13 @@ void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, const void *user)
     cpu->mem_user = (void *)user;
 }
 
-void cpu_set_tick_hook(cpu_t *cpu, cpu_tick_fn fn, void *user)
+void cpu_set_tick_hooks(cpu_t *cpu, const cpu_tick_entry_t *hooks, uint8_t count)
 {
-    cpu->tick_fn = fn;
-    cpu->tick_user = user;
+    if (!cpu) {
+        return;
+    }
+    cpu->tick_hooks = hooks;
+    cpu->tick_hook_count = hooks ? count : 0;
 }
 
 void cpu_set_int0_level(cpu_t *cpu, bool level)

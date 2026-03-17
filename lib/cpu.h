@@ -23,6 +23,12 @@ typedef struct {
 
 typedef void (*cpu_tick_fn)(cpu_t *cpu, uint32_t cycles, void *user);
 
+typedef struct {
+    cpu_tick_fn fn;
+    void *user;
+} cpu_tick_entry_t;
+
+
 typedef uint64_t (*cpu_time_now_ns_fn)(void *user);
 typedef void (*cpu_time_sleep_ns_fn)(uint64_t ns, void *user);
 
@@ -78,8 +84,8 @@ struct cpu {
     cpu_mem_ops_t mem_ops;
     void *mem_user;
 
-    cpu_tick_fn tick_fn;
-    void *tick_user;
+    const cpu_tick_entry_t *tick_hooks;
+    uint8_t tick_hook_count;
 
     bool in_isr;
     uint8_t isr_prio;
@@ -145,7 +151,7 @@ void cpu_set_trace(cpu_t *cpu, bool enabled, cpu_trace_fn fn, void *user);
 void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_hook write, void *user);
 void cpu_set_sfr_user(cpu_t *cpu, void *user);
 void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, const void *user);
-void cpu_set_tick_hook(cpu_t *cpu, cpu_tick_fn fn, void *user);
+void cpu_set_tick_hooks(cpu_t *cpu, const cpu_tick_entry_t *hooks, uint8_t count);
 void cpu_set_int0_level(cpu_t *cpu, bool level);
 void cpu_set_int1_level(cpu_t *cpu, bool level);
 void cpu_on_reti(cpu_t *cpu);
