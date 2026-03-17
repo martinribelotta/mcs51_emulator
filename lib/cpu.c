@@ -14,11 +14,23 @@
 #define SFR_DPL  0x82
 #define SFR_DPH  0x83
 #define SFR_TCON 0x88
+#define SFR_TMOD 0x89
+#define SFR_TL0  0x8A
+#define SFR_TL1  0x8B
+#define SFR_TH0  0x8C
+#define SFR_TH1  0x8D
 #define SFR_PSW  0xD0
+#define SFR_PCON 0x87
 #define SFR_IE   0xA8
 #define SFR_IP   0xB8
 #define SFR_ACC  0xE0
 #define SFR_B    0xF0
+#define SFR_P0   0x80
+#define SFR_P1   0x90
+#define SFR_P2   0xA0
+#define SFR_P3   0xB0
+#define SFR_SCON 0x98
+#define SFR_SBUF 0x99
 
 #define IE_EA  0x80
 #define IE_EX0 0x01
@@ -40,7 +52,6 @@
 #define TCON_TF0 0x20
 #define TCON_TF1 0x80
 
-#define SFR_SCON 0x98
 #define SCON_RI  0x01
 #define SCON_TI  0x02
 
@@ -170,7 +181,6 @@ void cpu_reset(cpu_t *cpu)
     }
     cpu_t reset = CPU_RESET_TEMPLATE;
     memcpy(reset.iram, cpu->iram, sizeof(cpu->iram));
-    memcpy(reset.sfr, cpu->sfr, sizeof(cpu->sfr));
     memcpy(reset.sfr_hooks, cpu->sfr_hooks, sizeof(cpu->sfr_hooks));
     reset.sfr_user = cpu->sfr_user;
     reset.mem_ops = cpu->mem_ops;
@@ -182,6 +192,43 @@ void cpu_reset(cpu_t *cpu)
     reset.int0_prev_level = cpu->int0_prev_level;
     reset.int1_prev_level = cpu->int1_prev_level;
     *cpu = reset;
+
+    cpu->acc = 0x00;
+    cpu->b = 0x00;
+    cpu->psw = 0x00;
+    cpu->sp = 0x07;
+    cpu->dptr = 0x0000;
+    cpu->pc = 0x0000;
+
+    cpu->halted = false;
+    cpu->last_opcode = 0x00;
+    cpu->halt_reason = NULL;
+    cpu->trace_enabled = false;
+    cpu->trace_fn = NULL;
+    cpu->trace_user = NULL;
+
+    memset(cpu->sfr, 0x00, sizeof(cpu->sfr));
+    sfr_set(cpu, SFR_ACC, 0x00);
+    sfr_set(cpu, SFR_B, 0x00);
+    sfr_set(cpu, SFR_PSW, 0x00);
+    sfr_set(cpu, SFR_SP, 0x07);
+    sfr_set(cpu, SFR_DPL, 0x00);
+    sfr_set(cpu, SFR_DPH, 0x00);
+    sfr_set(cpu, SFR_PCON, 0x00);
+    sfr_set(cpu, SFR_TCON, 0x00);
+    sfr_set(cpu, SFR_TMOD, 0x00);
+    sfr_set(cpu, SFR_TL0, 0x00);
+    sfr_set(cpu, SFR_TL1, 0x00);
+    sfr_set(cpu, SFR_TH0, 0x00);
+    sfr_set(cpu, SFR_TH1, 0x00);
+    sfr_set(cpu, SFR_SCON, 0x00);
+    sfr_set(cpu, SFR_SBUF, 0x00);
+    sfr_set(cpu, SFR_IE, 0x00);
+    sfr_set(cpu, SFR_IP, 0x00);
+    sfr_set(cpu, SFR_P0, 0xFF);
+    sfr_set(cpu, SFR_P1, 0xFF);
+    sfr_set(cpu, SFR_P2, 0xFF);
+    sfr_set(cpu, SFR_P3, 0xFF);
 }
 
 uint8_t cpu_fetch8(cpu_t *cpu)
