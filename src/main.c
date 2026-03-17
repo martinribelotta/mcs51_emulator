@@ -1,12 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
-#include "cpu.h"
-#include "mem_map.h"
+#include "mcs51_emulator.h"
 #include "hex_loader.h"
-#include "timing.h"
-#include "uart.h"
-#include "timers.h"
-#include "ports.h"
 
 #include <stdio.h>
 #include <stdlib.h>

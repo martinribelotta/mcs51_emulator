@@ -26,6 +26,7 @@ install(FILES
     decoder.h
     instr_impl.h
     instr_list.h
+    mcs51_emulator.h
     mem_map.h
     ports.h
     timers.h
