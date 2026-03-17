@@ -10,11 +10,11 @@ main:       MOV P1, #0FFh     ; ON
             ACALL delay
             SJMP main
 
-; ~250ms delay @ 12MHz (1us per machine cycle).
+; 250ms delay @ 11.0592MHz (1.085us per machine cycle).
 ; Nested loops: 2 * 250 * 250 * (DJNZ cycles) ≈ 250ms.
-delay:      MOV R5, #2        ; outermost
-d0:         MOV R7, #250      ; outer
-d1:         MOV R6, #250      ; inner
+delay:      MOV R5, #61       ; outermost
+d0:         MOV R7, #34       ; outer
+d1:         MOV R6, #54       ; inner
 d2:         DJNZ R6, d2
             DJNZ R7, d1
             DJNZ R5, d0

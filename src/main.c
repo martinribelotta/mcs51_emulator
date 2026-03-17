@@ -89,7 +89,7 @@ static const mem_map_t mem = {
     .xdata_regions = xdata_regions,
     .xdata_region_count = 1,
 };
-static const timing_config_t timing_cfg = { .fosc_hz = 12000000u, .clocks_per_cycle = 12 };
+static const timing_config_t timing_cfg = { .fosc_hz = 11059200u, .clocks_per_cycle = 12 };
 static timing_state_t timing_state = { .cycles_total = 0 };
 static const cpu_time_iface_t time_iface = {
     .now_ns = posix_now_ns,
@@ -113,6 +113,12 @@ static void uart_tx_stdout(uint8_t byte, void *user)
     FILE *out = user ? (FILE *)user : stdout;
     fputc((int)byte, out);
     fflush(out);
+}
+
+static void uart_baud_stdout(uint32_t baud, void *user)
+{
+    FILE *out = user ? (FILE *)user : stdout;
+    fprintf(out, "UART baud: %u\n", baud);
 }
 
 static void timers_tick_hook(cpu_t *cpu, uint32_t cycles, void *user)
@@ -159,6 +165,7 @@ int main(int argc, char **argv)
 
     uart_init(&uart, &timing_cfg);
     uart_set_tx_callback(&uart, uart_tx_stdout, stdout);
+    uart_set_baud_callback(&uart, uart_baud_stdout, stdout);
     uart_attach(&cpu, &uart);
     timers_init(&timers, &cpu);
     ports_init(&ports, &cpu, ports_read_stub, ports_write_stdout, stdout);

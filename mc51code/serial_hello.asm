@@ -4,9 +4,9 @@
             ORG 0030h
 start:      MOV SP, #70h
             MOV TMOD, #20h      ; Timer1 mode 2 (8-bit auto-reload)
-            MOV TH1, #0FAh      ; ~10416 baud @ 12MHz with SMOD=1
-            MOV TL1, #0FAh
-            MOV PCON, #80h      ; SMOD=1
+            MOV TH1, #0FDh      ; 9600 baud @ 11.0592MHz, SMOD=0
+            MOV TL1, #0FDh
+            MOV PCON, #00h      ; SMOD=0
             MOV SCON, #50h      ; Mode 1, REN=1
             SETB TR1
 
