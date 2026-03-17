@@ -6,8 +6,47 @@ static uint64_t mul_div_u64(uint64_t a, uint64_t b, uint64_t c)
     __uint128_t prod = (__uint128_t)a * (__uint128_t)b;
     return (uint64_t)(prod / c);
 #else
-    double prod = (double)a * (double)b;
-    return (uint64_t)(prod / (double)c);
+    if (c == 0) {
+        return 0;
+    }
+
+    uint64_t a_hi = a >> 32;
+    uint64_t a_lo = (uint32_t)a;
+    uint64_t b_hi = b >> 32;
+    uint64_t b_lo = (uint32_t)b;
+
+    uint64_t p0 = a_lo * b_lo;
+    uint64_t p1 = a_lo * b_hi;
+    uint64_t p2 = a_hi * b_lo;
+    uint64_t p3 = a_hi * b_hi;
+
+    uint64_t mid = (p0 >> 32) + (uint32_t)p1 + (uint32_t)p2;
+    uint64_t hi = p3 + (p1 >> 32) + (p2 >> 32) + (mid >> 32);
+    uint64_t lo = (mid << 32) | (uint32_t)p0;
+
+    uint64_t q_hi = 0;
+    uint64_t q_lo = 0;
+    uint64_t rem = 0;
+
+    for (int i = 127; i >= 0; --i) {
+        uint64_t bit = 0;
+        if (i >= 64) {
+            bit = (hi >> (i - 64)) & 1u;
+        } else {
+            bit = (lo >> i) & 1u;
+        }
+        rem = (rem << 1) | bit;
+        if (rem >= c) {
+            rem -= c;
+            if (i >= 64) {
+                q_hi |= (1ull << (i - 64));
+            } else {
+                q_lo |= (1ull << i);
+            }
+        }
+    }
+
+    return q_lo;
 #endif
 }
 
