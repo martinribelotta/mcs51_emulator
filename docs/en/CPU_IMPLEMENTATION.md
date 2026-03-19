@@ -80,7 +80,7 @@ Minimal host checklist:
 4. Load firmware into CODE.
 5. Run with `cpu_run` or `cpu_run_timed`.
 
-Working integration example: `src/main.c`.
+Working integration example: the [main integration source](../../src/main.c).
 
 ## 8. Code example
 
@@ -114,3 +114,10 @@ void run_firmware(cpu_t *cpu, timers_t *timers)
 - Use `cpu_run_timed` only when real-time pacing is required.
 - Keep peripherals in tick hooks and decoupled from the decoder.
 - Avoid direct external writes to `cpu->sfr[]`; prefer APIs and hooks.
+
+## 10. Related links
+
+- General guide: [Runtime implementation and usage guide](IMPLEMENTATION_USAGE_GUIDE.md)
+- CODE/XDATA Memory: [CODE/XDATA memory implementation](CODE_XDATA_MEMORY_IMPLEMENTATION.md)
+- Hooks and peripherals: [Register and memory hooks implementation](REGISTER_MEMORY_HOOKS_IMPLEMENTATION.md)
+- Spanish version: [Spanish CPU documentation](../es/IMPLEMENTACION_CPU.md)

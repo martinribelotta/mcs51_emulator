@@ -54,7 +54,7 @@ También inicializa `latch[]` desde el valor SFR actual del CPU.
 - `write_cb`: aplicar estados a hardware o a un modelo externo.
 
 ## 7. Ejemplo en el proyecto
-`src/main.c` muestra:
+El [código principal de integración](../../src/main.c) muestra:
 
 - `ports_read_stub` para inyectar señal RX serial por P3.
 - `ports_write_stdout` para log de salidas de puerto.
@@ -94,3 +94,10 @@ void attach_ports(cpu_t *cpu, ports_t *ports, uint8_t *ext_levels)
 
 - El modelo es suficiente para gran parte del firmware clásico, pero no emula fenómenos eléctricos finos (corriente, tiempos analógicos, contención de bus).
 - Si necesitás precisión eléctrica, crear una capa adicional de I/O físico encima de este módulo.
+
+## 11. Enlaces relacionados
+
+- Guía general: [Guía de implementación y uso](GUIA_IMPLEMENTACION_USO.md)
+- Timers (flancos externos): [Implementación de timers](IMPLEMENTACION_TIMERS.md)
+- Hooks SFR: [Implementación de hooks de registros y memoria](IMPLEMENTACION_HOOKS_REGISTROS_MEMORIA.md)
+- Versión en inglés: [Documentación en inglés de GPIO / puertos](../en/GPIO_PORTS_IMPLEMENTATION.md)

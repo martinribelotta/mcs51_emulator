@@ -48,7 +48,7 @@ Desde ese momento, el fetch de opcodes y los accesos MOVX pasan por el mapa.
 - Definir una región única para cada espacio.
 - Usar callbacks tipo RAM plana.
 
-Ese patrón está implementado en `src/main.c`.
+Ese patrón está implementado en el [código principal de integración](../../src/main.c).
 
 ### 5.2 Caso embebido
 - CODE puede mapear a flash/ROM o buffer de firmware.
@@ -108,3 +108,10 @@ void attach_flat_memory(cpu_t *cpu)
 	mem_map_attach(cpu, &map);
 }
 ```
+
+## 9. Enlaces relacionados
+
+- Guía general: [Guía de implementación y uso](GUIA_IMPLEMENTACION_USO.md)
+- CPU: [Implementación de CPU](IMPLEMENTACION_CPU.md)
+- Hooks de memoria: [Implementación de hooks de registros y memoria](IMPLEMENTACION_HOOKS_REGISTROS_MEMORIA.md)
+- Versión en inglés: [Documentación en inglés de memoria CODE/XDATA](../en/CODE_XDATA_MEMORY_IMPLEMENTATION.md)

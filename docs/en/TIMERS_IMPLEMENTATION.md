@@ -122,7 +122,7 @@ void on_gpio_sample(timers_t *timers, bool level, uint64_t timestamp)
 ```
 
 ## 9. Project validation coverage
-`tests/test_runner.c` validates:
+The [regression test suite](../../tests/test_runner.c) validates:
 
 - T0 edge-driven counting,
 - T2 capture via T2EX,
@@ -135,3 +135,10 @@ void on_gpio_sample(timers_t *timers, bool level, uint64_t timestamp)
 - Use monotonic timestamps.
 - Keep ISR work minimal: queue events and process in emulator loop.
 - For high-jitter platforms, prefer hardware input capture to improve edge accuracy.
+
+## 11. Related links
+
+- General guide: [Runtime implementation and usage guide](IMPLEMENTATION_USAGE_GUIDE.md)
+- GPIO (edge producers): [GPIO ports implementation](GPIO_PORTS_IMPLEMENTATION.md)
+- Hooks and runtime integration: [Register and memory hooks implementation](REGISTER_MEMORY_HOOKS_IMPLEMENTATION.md)
+- Spanish version: [Spanish timers documentation](../es/IMPLEMENTACION_TIMERS.md)

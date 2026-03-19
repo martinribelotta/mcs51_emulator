@@ -80,7 +80,7 @@ Checklist mínimo para una app host:
 4. Cargar firmware en CODE.
 5. Ejecutar `cpu_run` o `cpu_run_timed`.
 
-Ejemplo real de integración: `src/main.c`.
+Ejemplo real de integración: [código principal de integración](../../src/main.c).
 
 ## 8. Ejemplo de código
 
@@ -114,3 +114,10 @@ void run_firmware(cpu_t *cpu, timers_t *timers)
 - Usar `cpu_run_timed` solo si necesitás pacing en tiempo real.
 - Mantener periféricos en hooks de tick desacoplados del decoder.
 - Evitar escribir `cpu->sfr[]` directo desde fuera del core; preferir APIs y hooks.
+
+## 10. Enlaces relacionados
+
+- Guía general: [Guía de implementación y uso](GUIA_IMPLEMENTACION_USO.md)
+- Memoria CODE/XDATA: [Implementación de memoria CODE/XDATA](IMPLEMENTACION_MEMORIA_CODE_XDATA.md)
+- Hooks y periféricos: [Implementación de hooks de registros y memoria](IMPLEMENTACION_HOOKS_REGISTROS_MEMORIA.md)
+- Versión en inglés: [Documentación en inglés de CPU](../en/CPU_IMPLEMENTATION.md)

@@ -67,7 +67,7 @@ On RX completion:
 Delivery to firmware is timed, not instantaneous.
 
 ## 7. Working project example
-`src/main.c` demonstrates:
+The [main integration source](../../src/main.c) demonstrates:
 
 - UART attach,
 - TX callback to stdout,
@@ -119,3 +119,10 @@ void attach_uart(cpu_t *cpu, uart_t *uart, const timing_config_t *timing_cfg)
 - Keep one authoritative time source across the emulator.
 - Inject RX through queue/event-loop logic rather than heavy ISR work.
 - Log baud transitions when integrating with real hardware links.
+
+## 11. Related links
+
+- General guide: [Runtime implementation and usage guide](IMPLEMENTATION_USAGE_GUIDE.md)
+- Timers (time base): [Timers implementation](TIMERS_IMPLEMENTATION.md)
+- SFR/tick hooks: [Register and memory hooks implementation](REGISTER_MEMORY_HOOKS_IMPLEMENTATION.md)
+- Spanish version: [Spanish UART serial documentation](../es/IMPLEMENTACION_SERIAL_UART.md)

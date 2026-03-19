@@ -120,3 +120,11 @@ void attach_led(cpu_t *cpu, led_dev_t *dev)
 	cpu_set_tick_hooks(cpu, hooks, 1);
 }
 ```
+
+## 9. Enlaces relacionados
+
+- Guía general: [Guía de implementación y uso](GUIA_IMPLEMENTACION_USO.md)
+- CPU: [Implementación de CPU](IMPLEMENTACION_CPU.md)
+- Memoria CODE/XDATA: [Implementación de memoria CODE/XDATA](IMPLEMENTACION_MEMORIA_CODE_XDATA.md)
+- UART / Timers / GPIO: [Implementación de UART serial](IMPLEMENTACION_SERIAL_UART.md), [Implementación de timers](IMPLEMENTACION_TIMERS.md), [Implementación de GPIO / puertos](IMPLEMENTACION_GPIO_PORTS.md)
+- Versión en inglés: [Documentación en inglés de hooks de registros y memoria](../en/REGISTER_MEMORY_HOOKS_IMPLEMENTATION.md)

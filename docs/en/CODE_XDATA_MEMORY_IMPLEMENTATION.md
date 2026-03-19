@@ -48,7 +48,7 @@ After attachment, opcode fetches and MOVX accesses flow through this map.
 - Define one region for each memory space.
 - Use RAM-like callbacks.
 
-This pattern is implemented in `src/main.c`.
+This pattern is implemented in the [main integration source](../../src/main.c).
 
 ### 5.2 Embedded setup
 - CODE can point to flash/ROM or firmware buffers.
@@ -108,3 +108,10 @@ void attach_flat_memory(cpu_t *cpu)
 	mem_map_attach(cpu, &map);
 }
 ```
+
+## 9. Related links
+
+- General guide: [Runtime implementation and usage guide](IMPLEMENTATION_USAGE_GUIDE.md)
+- CPU: [CPU implementation and usage](CPU_IMPLEMENTATION.md)
+- Memory hooks: [Register and memory hooks implementation](REGISTER_MEMORY_HOOKS_IMPLEMENTATION.md)
+- Spanish version: [Spanish CODE/XDATA memory documentation](../es/IMPLEMENTACION_MEMORIA_CODE_XDATA.md)

@@ -122,7 +122,7 @@ void on_gpio_sample(timers_t *timers, bool level, uint64_t timestamp)
 ```
 
 ## 9. Validación en el proyecto
-Los tests en `tests/test_runner.c` cubren:
+La [suite de pruebas de regresión](../../tests/test_runner.c) cubre:
 
 - conteo por flancos de T0,
 - captura T2 por T2EX,
@@ -135,3 +135,10 @@ Los tests en `tests/test_runner.c` cubren:
 - Mantener timestamps monotónicos.
 - Minimizar trabajo en ISR: encolar evento y procesar en loop del emulador.
 - Si hay jitter alto, usar captura hardware del MCU para mejorar precisión de flanco.
+
+## 11. Enlaces relacionados
+
+- Guía general: [Guía de implementación y uso](GUIA_IMPLEMENTACION_USO.md)
+- GPIO (origen de flancos): [Implementación de GPIO / puertos](IMPLEMENTACION_GPIO_PORTS.md)
+- Hooks y runtime: [Implementación de hooks de registros y memoria](IMPLEMENTACION_HOOKS_REGISTROS_MEMORIA.md)
+- Versión en inglés: [Documentación en inglés de timers](../en/TIMERS_IMPLEMENTATION.md)

@@ -54,7 +54,7 @@ It also initializes `latch[]` from current SFR values.
 - `write_cb`: apply port output to hardware or external simulation model.
 
 ## 7. Project example
-`src/main.c` demonstrates:
+The [main integration source](../../src/main.c) demonstrates:
 
 - `ports_read_stub` to inject serial RX waveform on P3.
 - `ports_write_stdout` to log port output activity.
@@ -94,3 +94,10 @@ void attach_ports(cpu_t *cpu, ports_t *ports, uint8_t *ext_levels)
 
 - The model is suitable for most classic firmware behavior, but does not emulate fine electrical effects (analog timing, current limits, bus contention).
 - For electrical-level fidelity, add a dedicated physical I/O layer on top of this module.
+
+## 11. Related links
+
+- General guide: [Runtime implementation and usage guide](IMPLEMENTATION_USAGE_GUIDE.md)
+- Timers (external edge consumers): [Timers implementation](TIMERS_IMPLEMENTATION.md)
+- SFR hooks: [Register and memory hooks implementation](REGISTER_MEMORY_HOOKS_IMPLEMENTATION.md)
+- Spanish version: [Spanish GPIO/ports documentation](../es/IMPLEMENTACION_GPIO_PORTS.md)

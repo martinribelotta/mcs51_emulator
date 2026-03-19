@@ -5,22 +5,22 @@ This index organizes the technical documentation by subsystem.
 ## Documents
 
 1. CPU
-   - `docs/en/CPU_IMPLEMENTATION.md`
+   - [CPU implementation](CPU_IMPLEMENTATION.md)
 
 2. CODE/XDATA Memory
-   - `docs/en/CODE_XDATA_MEMORY_IMPLEMENTATION.md`
+   - [CODE/XDATA memory implementation](CODE_XDATA_MEMORY_IMPLEMENTATION.md)
 
 3. Register and Memory Hooks
-   - `docs/en/REGISTER_MEMORY_HOOKS_IMPLEMENTATION.md`
+   - [Register and memory hooks implementation](REGISTER_MEMORY_HOOKS_IMPLEMENTATION.md)
 
 4. UART Serial
-   - `docs/en/UART_SERIAL_IMPLEMENTATION.md`
+   - [UART serial implementation](UART_SERIAL_IMPLEMENTATION.md)
 
 5. Timers
-   - `docs/en/TIMERS_IMPLEMENTATION.md`
+   - [Timers implementation](TIMERS_IMPLEMENTATION.md)
 
 6. GPIO / Ports
-   - `docs/en/GPIO_PORTS_IMPLEMENTATION.md`
+   - [GPIO ports implementation](GPIO_PORTS_IMPLEMENTATION.md)
 
 ## Recommended reading order
 
@@ -49,5 +49,11 @@ This index organizes the technical documentation by subsystem.
 
 ## Notes
 
-- `src/main.c` is a complete, working wiring reference.
-- `tests/test_runner.c` provides useful regression tests.
+- The [main integration source](../../src/main.c) is a complete, working wiring reference.
+- The [regression test suite](../../tests/test_runner.c) provides useful regression tests.
+
+## Cross links
+
+- Spanish guide: [Guía en español](../es/GUIA_IMPLEMENTACION_USO.md)
+- CPU ↔ Memory: [CPU implementation and usage](CPU_IMPLEMENTATION.md) and [CODE/XDATA memory implementation](CODE_XDATA_MEMORY_IMPLEMENTATION.md)
+- Hooks ↔ Peripherals: [Register and memory hooks implementation](REGISTER_MEMORY_HOOKS_IMPLEMENTATION.md), [UART serial implementation](UART_SERIAL_IMPLEMENTATION.md), [Timers implementation](TIMERS_IMPLEMENTATION.md), [GPIO ports implementation](GPIO_PORTS_IMPLEMENTATION.md)
