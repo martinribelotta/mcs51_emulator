@@ -31,6 +31,11 @@
 #define SFR_P3   0xB0
 #define SFR_SCON 0x98
 #define SFR_SBUF 0x99
+#define SFR_T2CON 0xC8
+#define SFR_RCAP2L 0xCA
+#define SFR_RCAP2H 0xCB
+#define SFR_TL2  0xCC
+#define SFR_TH2  0xCD
 
 #define IE_EA  0x80
 #define IE_EX0 0x01
@@ -38,12 +43,14 @@
 #define IE_EX1 0x04
 #define IE_ET1 0x08
 #define IE_ES  0x10
+#define IE_ET2 0x20
 
 #define IP_PX0 0x01
 #define IP_PT0 0x02
 #define IP_PX1 0x04
 #define IP_PT1 0x08
 #define IP_PS  0x10
+#define IP_PT2 0x20
 
 #define TCON_IT0 0x01
 #define TCON_IE0 0x02
@@ -54,6 +61,9 @@
 
 #define PCON_IDL 0x01
 #define PCON_PD  0x02
+
+#define T2CON_TF2  0x80
+#define T2CON_EXF2 0x40
 
 #define SCON_RI  0x01
 #define SCON_TI  0x02
@@ -186,7 +196,6 @@ void cpu_reset(cpu_t *cpu)
     cpu_t reset = CPU_RESET_TEMPLATE;
     memcpy(reset.iram, cpu->iram, sizeof(cpu->iram));
     memcpy(reset.sfr_hooks, cpu->sfr_hooks, sizeof(cpu->sfr_hooks));
-    reset.sfr_user = cpu->sfr_user;
     reset.mem_ops = cpu->mem_ops;
     reset.mem_user = cpu->mem_user;
     reset.tick_hooks = cpu->tick_hooks;
@@ -227,6 +236,11 @@ void cpu_reset(cpu_t *cpu)
     sfr_set(cpu, SFR_TL1, 0x00);
     sfr_set(cpu, SFR_TH0, 0x00);
     sfr_set(cpu, SFR_TH1, 0x00);
+    sfr_set(cpu, SFR_T2CON, 0x00);
+    sfr_set(cpu, SFR_RCAP2L, 0x00);
+    sfr_set(cpu, SFR_RCAP2H, 0x00);
+    sfr_set(cpu, SFR_TL2, 0x00);
+    sfr_set(cpu, SFR_TH2, 0x00);
     sfr_set(cpu, SFR_SCON, 0x00);
     sfr_set(cpu, SFR_SBUF, 0x00);
     sfr_set(cpu, SFR_IE, 0x00);
@@ -258,7 +272,7 @@ uint8_t cpu_read_direct(cpu_t *cpu, uint8_t addr)
     }
     uint8_t idx = (uint8_t)(addr - 0x80);
     if (cpu->sfr_hooks[idx].read) {
-        void *user = cpu->sfr_hooks[idx].user ? cpu->sfr_hooks[idx].user : cpu->sfr_user;
+        void *user = cpu->sfr_hooks[idx].user;
         return cpu->sfr_hooks[idx].read(cpu, addr, user);
     }
     return cpu->sfr[idx];
@@ -272,7 +286,7 @@ void cpu_write_direct(cpu_t *cpu, uint8_t addr, uint8_t value)
     }
     uint8_t idx = (uint8_t)(addr - 0x80);
     if (cpu->sfr_hooks[idx].write) {
-        void *user = cpu->sfr_hooks[idx].user ? cpu->sfr_hooks[idx].user : cpu->sfr_user;
+        void *user = cpu->sfr_hooks[idx].user;
         cpu->sfr_hooks[idx].write(cpu, addr, value, user);
         if (addr == SFR_PCON) {
             cpu_apply_pcon(cpu, sfr_get(cpu, SFR_PCON));
@@ -580,7 +594,7 @@ uint8_t cpu_step(cpu_t *cpu)
     return cpu->halted ? 0 : cycles;
 }
 
-void cpu_run(cpu_t *cpu, uint64_t max_steps)
+uint64_t cpu_run(cpu_t *cpu, uint64_t max_steps)
 {
     uint64_t steps = 0;
     while (!cpu->halted) {
@@ -606,17 +620,17 @@ void cpu_run(cpu_t *cpu, uint64_t max_steps)
         }
         steps++;
     }
+    return steps;
 }
 
-void cpu_run_timed(cpu_t *cpu,
-                   uint64_t max_steps,
-                   const timing_config_t *timing_cfg,
-                   timing_state_t *timing_state,
-                   const cpu_time_iface_t *time_iface)
+uint64_t cpu_run_timed(cpu_t *cpu,
+                       uint64_t max_steps,
+                       const timing_config_t *timing_cfg,
+                       timing_state_t *timing_state,
+                       const cpu_time_iface_t *time_iface)
 {
     if (!timing_cfg || !timing_state) {
-        cpu_run(cpu, max_steps);
-        return;
+        return cpu_run(cpu, max_steps);
     }
 
     uint64_t steps = 0;
@@ -658,6 +672,7 @@ void cpu_run_timed(cpu_t *cpu,
             }
         }
     }
+    return steps;
 }
 
 void cpu_set_trace(cpu_t *cpu, bool enabled, cpu_trace_fn fn, void *user)
@@ -676,11 +691,6 @@ void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_ho
     cpu->sfr_hooks[idx].read = read;
     cpu->sfr_hooks[idx].write = write;
     cpu->sfr_hooks[idx].user = user;
-}
-
-void cpu_set_sfr_user(cpu_t *cpu, void *user)
-{
-    cpu->sfr_user = user;
 }
 
 void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, const void *user)
@@ -833,6 +843,13 @@ static bool cpu_interrupt_pending(cpu_t *cpu, int src, uint8_t *out_prio, uint16
             return true;
         }
         break; }
+    case 5: { /* T2 */
+        if ((ie & IE_ET2) && (sfr_get(cpu, SFR_T2CON) & (T2CON_TF2 | T2CON_EXF2))) {
+            *out_prio = (ip & IP_PT2) ? 1u : 0u;
+            *out_vector = 0x002B;
+            return true;
+        }
+        break; }
     default:
         break;
     }
@@ -886,6 +903,8 @@ static void cpu_service_interrupt(cpu_t *cpu, int src, uint8_t prio, uint16_t ve
         break; }
     case 4: { /* SERIAL */
         break; }
+    case 5: { /* T2 */
+        break; }
     default:
         break;
     }
@@ -904,7 +923,7 @@ static void cpu_check_interrupts(cpu_t *cpu)
     uint16_t best_vec = 0;
     int best_src = -1;
 
-    for (int src = 0; src < 5; ++src) {
+    for (int src = 0; src < 6; ++src) {
         uint8_t prio = 0;
         uint16_t vec = 0;
         if (!cpu_interrupt_pending(cpu, src, &prio, &vec)) {

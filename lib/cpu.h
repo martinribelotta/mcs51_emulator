@@ -73,7 +73,6 @@ struct cpu {
     uint8_t iram[256];
     uint8_t sfr[128];
     sfr_hook_t sfr_hooks[128];
-    void *sfr_user;
 
     bool halted;
     uint8_t last_opcode;
@@ -146,15 +145,14 @@ uint8_t cpu_read_bit(cpu_t *cpu, uint8_t bit_addr);
 void cpu_write_bit(cpu_t *cpu, uint8_t bit_addr, bool value);
 
 uint8_t cpu_step(cpu_t *cpu);
-void cpu_run(cpu_t *cpu, uint64_t max_steps);
-void cpu_run_timed(cpu_t *cpu,
-                   uint64_t max_steps,
-                   const timing_config_t *timing_cfg,
-                   timing_state_t *timing_state,
-                   const cpu_time_iface_t *time_iface);
+uint64_t cpu_run(cpu_t *cpu, uint64_t max_steps);
+uint64_t cpu_run_timed(cpu_t *cpu,
+                       uint64_t max_steps,
+                       const timing_config_t *timing_cfg,
+                       timing_state_t *timing_state,
+                       const cpu_time_iface_t *time_iface);
 void cpu_set_trace(cpu_t *cpu, bool enabled, cpu_trace_fn fn, void *user);
 void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_hook write, void *user);
-void cpu_set_sfr_user(cpu_t *cpu, void *user);
 void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, const void *user);
 void cpu_set_tick_hooks(cpu_t *cpu, const cpu_tick_entry_t *hooks, uint8_t count);
 void cpu_set_int0_level(cpu_t *cpu, bool level);
