@@ -67,3 +67,44 @@ Síntomas típicos de wiring incorrecto:
 - CPU se detiene con opcode inválido: probable CODE sin cargar o mapa mal configurado.
 - Lecturas constantes en `0xFF`: región no encontrada o callback nulo.
 - MOVX no modifica datos: write callback ausente o ruta XDATA no conectada.
+
+## 8. Ejemplo de código
+
+```c
+#include "mem_map.h"
+
+static uint8_t code_rom[65536];
+static uint8_t xdata_ram[65536];
+
+static uint8_t flat_read(const cpu_t *cpu, uint16_t addr, void *user)
+{
+	(void)cpu;
+	uint8_t *mem = (uint8_t *)user;
+	return mem[addr];
+}
+
+static void flat_write(cpu_t *cpu, uint16_t addr, uint8_t value, void *user)
+{
+	(void)cpu;
+	uint8_t *mem = (uint8_t *)user;
+	mem[addr] = value;
+}
+
+void attach_flat_memory(cpu_t *cpu)
+{
+	static const mem_map_region_t code_regions[] = {
+		{ .base = 0x0000, .size = sizeof(code_rom), .read = flat_read, .write = NULL, .user = code_rom },
+	};
+	static const mem_map_region_t xdata_regions[] = {
+		{ .base = 0x0000, .size = sizeof(xdata_ram), .read = flat_read, .write = flat_write, .user = xdata_ram },
+	};
+	static const mem_map_t map = {
+		.code_regions = code_regions,
+		.code_region_count = MCS51_ARRAY_LEN(code_regions),
+		.xdata_regions = xdata_regions,
+		.xdata_region_count = MCS51_ARRAY_LEN(xdata_regions),
+	};
+
+	mem_map_attach(cpu, &map);
+}
+```

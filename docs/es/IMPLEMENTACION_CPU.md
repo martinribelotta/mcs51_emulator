@@ -82,7 +82,33 @@ Checklist mínimo para una app host:
 
 Ejemplo real de integración: `src/main.c`.
 
-## 8. Buenas prácticas
+## 8. Ejemplo de código
+
+```c
+#include "cpu.h"
+#include "timers.h"
+
+static void timers_tick_hook(cpu_t *cpu, uint32_t cycles, void *user)
+{
+	(void)cpu;
+	timers_tick((timers_t *)user, cycles);
+}
+
+void run_firmware(cpu_t *cpu, timers_t *timers)
+{
+	cpu_tick_entry_t hooks[] = {
+		{ .fn = timers_tick_hook, .user = timers },
+	};
+
+	cpu_init(cpu);
+	timers_init(timers, cpu);
+	cpu_set_tick_hooks(cpu, hooks, MCS51_ARRAY_LEN(hooks));
+
+	cpu_run(cpu, 100000);
+}
+```
+
+## 9. Buenas prácticas
 
 - Usar `cpu_step` para depuración fina por instrucción.
 - Usar `cpu_run_timed` solo si necesitás pacing en tiempo real.

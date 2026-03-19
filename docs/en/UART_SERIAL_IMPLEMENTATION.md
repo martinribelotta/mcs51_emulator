@@ -74,13 +74,47 @@ Delivery to firmware is timed, not instantaneous.
 - baud-change callback,
 - progression via tick hook.
 
-## 8. Common issues and diagnostics
+## 8. Code example
+
+```c
+#include "uart.h"
+
+static void uart_tick_hook(cpu_t *cpu, uint32_t cycles, void *user)
+{
+	(void)cpu;
+	uart_tick((uart_t *)user, cycles);
+}
+
+static void on_uart_tx(uint8_t byte, void *user)
+{
+	(void)user;
+	/* Forward byte to host console, socket, or file */
+	(void)byte;
+}
+
+void attach_uart(cpu_t *cpu, uart_t *uart, const timing_config_t *timing_cfg)
+{
+	static cpu_tick_entry_t hooks[1];
+
+	uart_init(uart, timing_cfg);
+	uart_attach(cpu, uart);
+	uart_set_tx_callback(uart, on_uart_tx, NULL);
+
+	hooks[0].fn = uart_tick_hook;
+	hooks[0].user = uart;
+	cpu_set_tick_hooks(cpu, hooks, 1);
+
+	uart_queue_rx_byte(uart, 'A');
+}
+```
+
+## 9. Common issues and diagnostics
 
 - `bit_cycles = 0`: baud not configured or Timer1 not enabled.
 - RX rejected: `rx_pending` already occupied (overrun path).
 - Firmware not receiving: `REN` disabled or `SM2` filtering active.
 
-## 9. Recommendations
+## 10. Recommendations
 
 - Keep one authoritative time source across the emulator.
 - Inject RX through queue/event-loop logic rather than heavy ISR work.

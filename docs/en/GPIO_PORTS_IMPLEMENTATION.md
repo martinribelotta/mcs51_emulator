@@ -59,13 +59,38 @@ It also initializes `latch[]` from current SFR values.
 - `ports_read_stub` to inject serial RX waveform on P3.
 - `ports_write_stdout` to log port output activity.
 
-## 8. Recommendations
+## 8. Code example
+
+```c
+#include <stdio.h>
+#include "ports.h"
+
+static uint8_t host_read_pin(uint8_t port, void *user)
+{
+  const uint8_t *ext_levels = (const uint8_t *)user;
+  return ext_levels[port & 0x03u];
+}
+
+static void host_write_pin(uint8_t port, uint8_t level, uint8_t mask, void *user)
+{
+  (void)user;
+  /* Forward to logger, host GPIO layer, or external simulation */
+  printf("P%u level=0x%02X mask=0x%02X\n", port, level, mask);
+}
+
+void attach_ports(cpu_t *cpu, ports_t *ports, uint8_t *ext_levels)
+{
+  ports_init(ports, cpu, host_read_pin, host_write_pin, ext_levels);
+}
+```
+
+## 9. Recommendations
 
 - Keep `read_cb` non-blocking.
 - Avoid side effects in read callbacks.
 - If timer counter-mode edges are needed, derive them in GPIO integration and forward to `timers`.
 
-## 9. Current limitations
+## 10. Current limitations
 
 - The model is suitable for most classic firmware behavior, but does not emulate fine electrical effects (analog timing, current limits, bus contention).
 - For electrical-level fidelity, add a dedicated physical I/O layer on top of this module.

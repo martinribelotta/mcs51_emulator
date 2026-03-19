@@ -86,7 +86,42 @@ Uso principal actual: decidir comportamiento de `TF2` cuando Timer2 está en mod
 ### 7.3 Interrupciones
 El core CPU atiende IRQ de T0/T1/T2 leyendo flags (`TF0/TF1/TF2/EXF2`) en `cpu_check_interrupts`.
 
-## 8. Validación en el proyecto
+## 8. Ejemplo de código
+
+```c
+#include "timers.h"
+
+static void timers_tick_hook(cpu_t *cpu, uint32_t cycles, void *user)
+{
+	(void)cpu;
+	timers_tick((timers_t *)user, cycles);
+}
+
+void attach_timers(cpu_t *cpu, timers_t *timers)
+{
+	static cpu_tick_entry_t hooks[1];
+
+	timers_init(timers, cpu);
+	timers_set_profile(timers, TIMERS_PROFILE_PRAGMATIC);
+
+	timers_route_input(timers,
+					   0,
+					   true,
+					   TIMERS_SIGNAL_T0_CLK,
+					   TIMERS_EDGE_FALLING);
+
+	hooks[0].fn = timers_tick_hook;
+	hooks[0].user = timers;
+	cpu_set_tick_hooks(cpu, hooks, 1);
+}
+
+void on_gpio_sample(timers_t *timers, bool level, uint64_t timestamp)
+{
+	timers_input_sample(timers, 0, level, timestamp);
+}
+```
+
+## 9. Validación en el proyecto
 Los tests en `tests/test_runner.c` cubren:
 
 - conteo por flancos de T0,
@@ -95,7 +130,7 @@ Los tests en `tests/test_runner.c` cubren:
 - perfil strict/pragmatic,
 - interrupción T2 por `EXF2`.
 
-## 9. Recomendaciones de portabilidad
+## 10. Recomendaciones de portabilidad
 
 - Mantener timestamps monotónicos.
 - Minimizar trabajo en ISR: encolar evento y procesar en loop del emulador.

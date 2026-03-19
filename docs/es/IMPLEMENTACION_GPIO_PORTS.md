@@ -59,13 +59,38 @@ También inicializa `latch[]` desde el valor SFR actual del CPU.
 - `ports_read_stub` para inyectar señal RX serial por P3.
 - `ports_write_stdout` para log de salidas de puerto.
 
-## 8. Recomendaciones
+## 8. Ejemplo de código
+
+```c
+#include <stdio.h>
+#include "ports.h"
+
+static uint8_t host_read_pin(uint8_t port, void *user)
+{
+  const uint8_t *ext_levels = (const uint8_t *)user;
+  return ext_levels[port & 0x03u];
+}
+
+static void host_write_pin(uint8_t port, uint8_t level, uint8_t mask, void *user)
+{
+  (void)user;
+  /* Enviar a logger, GPIO host o simulador externo */
+  printf("P%u level=0x%02X mask=0x%02X\n", port, level, mask);
+}
+
+void attach_ports(cpu_t *cpu, ports_t *ports, uint8_t *ext_levels)
+{
+  ports_init(ports, cpu, host_read_pin, host_write_pin, ext_levels);
+}
+```
+
+## 9. Recomendaciones
 
 - Mantener `read_cb` libre de bloqueos.
 - Evitar side-effects de escritura dentro de `read_cb`.
 - Si necesitás flancos para timers en modo counter, derivarlos desde la misma capa GPIO y enviarlos al módulo `timers`.
 
-## 9. Limitaciones actuales
+## 10. Limitaciones actuales
 
 - El modelo es suficiente para gran parte del firmware clásico, pero no emula fenómenos eléctricos finos (corriente, tiempos analógicos, contención de bus).
 - Si necesitás precisión eléctrica, crear una capa adicional de I/O físico encima de este módulo.

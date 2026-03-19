@@ -77,3 +77,45 @@ UART, Timers, and Ports in this project follow this pattern.
 3. Register tick hook if cycle-dependent.
 4. Validate interrupt interactions.
 5. Add a minimal functional test.
+
+## 8. Code example
+
+```c
+#include "cpu.h"
+
+typedef struct {
+	uint8_t shadow;
+} led_dev_t;
+
+static uint8_t led_read(const cpu_t *cpu, uint8_t addr, void *user)
+{
+	(void)cpu;
+	(void)addr;
+	return ((led_dev_t *)user)->shadow;
+}
+
+static void led_write(cpu_t *cpu, uint8_t addr, uint8_t value, void *user)
+{
+	(void)cpu;
+	(void)addr;
+	((led_dev_t *)user)->shadow = value;
+}
+
+static void led_tick(cpu_t *cpu, uint32_t cycles, void *user)
+{
+	(void)cpu;
+	(void)cycles;
+	(void)user;
+}
+
+void attach_led(cpu_t *cpu, led_dev_t *dev)
+{
+	static cpu_tick_entry_t hooks[1];
+
+	cpu_set_sfr_hook(cpu, 0x90, led_read, led_write, dev); /* P1 */
+
+	hooks[0].fn = led_tick;
+	hooks[0].user = dev;
+	cpu_set_tick_hooks(cpu, hooks, 1);
+}
+```

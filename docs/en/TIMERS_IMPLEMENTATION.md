@@ -86,7 +86,42 @@ Current profile impact: `TF2` behavior when Timer2 runs in baud-related modes (`
 ### 7.3 Interrupts
 CPU interrupt controller services T0/T1/T2 using `TF0/TF1/TF2/EXF2` flags in `cpu_check_interrupts`.
 
-## 8. Project validation coverage
+## 8. Code example
+
+```c
+#include "timers.h"
+
+static void timers_tick_hook(cpu_t *cpu, uint32_t cycles, void *user)
+{
+	(void)cpu;
+	timers_tick((timers_t *)user, cycles);
+}
+
+void attach_timers(cpu_t *cpu, timers_t *timers)
+{
+	static cpu_tick_entry_t hooks[1];
+
+	timers_init(timers, cpu);
+	timers_set_profile(timers, TIMERS_PROFILE_PRAGMATIC);
+
+	timers_route_input(timers,
+					   0,
+					   true,
+					   TIMERS_SIGNAL_T0_CLK,
+					   TIMERS_EDGE_FALLING);
+
+	hooks[0].fn = timers_tick_hook;
+	hooks[0].user = timers;
+	cpu_set_tick_hooks(cpu, hooks, 1);
+}
+
+void on_gpio_sample(timers_t *timers, bool level, uint64_t timestamp)
+{
+	timers_input_sample(timers, 0, level, timestamp);
+}
+```
+
+## 9. Project validation coverage
 `tests/test_runner.c` validates:
 
 - T0 edge-driven counting,
@@ -95,7 +130,7 @@ CPU interrupt controller services T0/T1/T2 using `TF0/TF1/TF2/EXF2` flags in `cp
 - strict vs pragmatic profile behavior,
 - T2 interrupt dispatch from `EXF2`.
 
-## 9. Portability recommendations
+## 10. Portability recommendations
 
 - Use monotonic timestamps.
 - Keep ISR work minimal: queue events and process in emulator loop.

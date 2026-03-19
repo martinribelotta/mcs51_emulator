@@ -82,7 +82,33 @@ Minimal host checklist:
 
 Working integration example: `src/main.c`.
 
-## 8. Best practices
+## 8. Code example
+
+```c
+#include "cpu.h"
+#include "timers.h"
+
+static void timers_tick_hook(cpu_t *cpu, uint32_t cycles, void *user)
+{
+	(void)cpu;
+	timers_tick((timers_t *)user, cycles);
+}
+
+void run_firmware(cpu_t *cpu, timers_t *timers)
+{
+	cpu_tick_entry_t hooks[] = {
+		{ .fn = timers_tick_hook, .user = timers },
+	};
+
+	cpu_init(cpu);
+	timers_init(timers, cpu);
+	cpu_set_tick_hooks(cpu, hooks, MCS51_ARRAY_LEN(hooks));
+
+	cpu_run(cpu, 100000);
+}
+```
+
+## 9. Best practices
 
 - Use `cpu_step` for instruction-level debugging.
 - Use `cpu_run_timed` only when real-time pacing is required.
