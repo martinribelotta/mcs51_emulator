@@ -79,14 +79,7 @@ static const char *const k_mnemonic_names[] = {
 
 instr_desc_t decode(uint8_t opcode)
 {
-    instr_desc_t desc = k_instr_table[opcode];
-    if (desc.mnemonic == MN_INVALID) {
-        desc.size = 1;
-        desc.dst_mode = AM_NONE;
-        desc.src_mode = AM_NONE;
-        desc.cycles = 1;
-    }
-    return desc;
+    return k_instr_table[opcode];
 }
 
 const char *opcode_name(uint8_t opcode)
