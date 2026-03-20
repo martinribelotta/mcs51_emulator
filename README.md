@@ -1,147 +1,75 @@
-# MCS-51 Emulator
+# MCS51 Emulator Core
 
-A lightweight emulator for the Intel 8051 (MCS-51) architecture that allows you to run legacy firmware without needing the original source code.
+Portable MCS-51 (8051) CPU emulator written in C.
 
-## Purpose
+## Overview
 
-This project implements a binary compatibility layer for MCS-51 that enables execution of original binaries (Intel HEX or binary format) on modern hardware like STM32 or ESP32, without needing to recompile the firmware.
+This repository contains a standalone emulator core for the MCS-51 architecture.
 
-The emulator takes your original .hex or binary firmware, decodes the 8051 instruction set, and executes it faithfully with realistic timing and peripheral simulation.
+It implements:
 
-## When You'd Use This
+- CPU execution engine
+- Instruction decoding
+- Memory model (code, IRAM, SFR, XRAM)
+- Cycle-based timing
+- Instruction tracing
 
-- Industrial equipment retrofitting: modernize legacy controllers while maintaining the original firmware
-- PLC modernization: migrate systems to modern hardware when original equipment is hard to find
-- Firmware archaeology: analyze binaries without source code access
-- Testing and validation: verify firmware behavior before deploying to target hardware
-- Hardware migration: move working firmware to new platforms without recompilation
+The core is designed to be embedded into other systems and extended with platform-specific integrations.
+
+## Features
+
+- Full 8051 CPU emulation
+- Cycle-accurate timing model
+- Interceptable memory access
+- SFR and XRAM hooks
+- Instruction trace support
+- No platform dependencies
+
+## Design Goals
+
+- Portable C implementation
+- No dynamic allocation
+- Deterministic execution
+- Easy integration into embedded systems
 
 ## Architecture
 
-```
-├─ 8051 Firmware (.hex/.bin)
-├─ CPU Emulator (decodes & runs 8051 instructions)
-├─ Memory layer (code, RAM, SFR registers)
-├─ Peripheral simulation (UART, timers, GPIO)
-└─ Real hardware (or host machine)
-```
+The emulator is structured as:
 
-The system consists of several interdependent layers:
+- CPU state structure
+- Instruction dispatch table
+- Memory access callbacks
+- External hooks for peripherals
 
-- CPU core: handles instruction decoding and execution, manages registers, flags, and program counter
-- Memory: simulates the 8051's address spaces including code ROM, internal RAM, and special function registers
-- Peripherals: simulate UART, timers, and I/O ports allowing firmware to interact with virtual hardware
-- Timing: tracks execution cycles to maintain timing accuracy for timing-sensitive code
+All hardware-specific behavior is delegated to the host application.
 
-## Project Structure
+## Intended Usage
 
-```
-mcs51-emulator/
-├── lib/                      # Core emulator library
-│   ├── cpu.c/.h             # CPU core - instruction execution
-│   ├── decoder.c/.h         # Instruction decoder
-│   ├── instr_impl.c/.h      # Instruction implementations
-│   ├── mem_map.c/.h         # Memory address space mapping
-│   ├── timers.c/.h          # Timer simulation (Timer0/1/2)
-│   ├── uart.c/.h            # UART serial port simulation
-│   ├── ports.c/.h           # GPIO port simulation
-│   └── timing.c/.h          # Cycle counting and timing control
-├── src/main.c               # Command-line emulator application
-├── tests/                   # Comprehensive unit test suite
-├── mc51code/                # Example 8051 assembly programs
-├── docs/                    # Documentation (Spanish and English)
-└── build/                   # CMake build output
-```
+This core is not a full system emulator.
 
-The core implementation files (cpu.c, decoder.c, instr_impl.c) handle the emulation logic. The remaining components provide memory management, peripheral simulation, and timing control.
+It is intended to be used as a building block for:
 
-## Using the Emulator
+- Firmware execution runtimes
+- Hardware compatibility layers
+- Embedded simulation environments
+- Reverse engineering tools
 
-The main.c program provides a command-line interface to run firmware binaries. It performs the following steps:
+## Integration Example
 
-1. Initializes CPU with 64KB code memory and 64KB data memory
-2. Attaches peripheral simulations (UART, timers, GPIO)
-3. Loads the firmware .hex file into code memory
-4. Configures execution hooks for cycle-accurate timing
-5. Executes the firmware until halt, step limit, or error
+See the STM32 integration example:
 
-### Command-Line Usage
+mcs51_emulator_h750
 
-Load and run firmware with full instruction tracing:
-```bash
-./mcs51_emulator firmware.hex 100000 --trace
-```
+This demonstrates how to:
 
-Run firmware for up to 50000 steps:
-```bash
-./mcs51_emulator firmware.hex 50000
-```
+- map SFR registers to hardware peripherals
+- run firmware on a real microcontroller
+- preserve timing and behavior
 
-Run firmware until it halts:
-```bash
-./mcs51_emulator firmware.hex
-```
+## Status
 
-### Output Examples
+The core is stable and used in a working STM32 runtime that executes real firmware.
 
-With `--trace` enabled, each instruction is logged with register state:
-```
-0000  00  NOP                ACC=00 PSW=00 SP=07 DPTR=0000
-0001  00  NOP                ACC=00 PSW=00 SP=07 DPTR=0000
-0002  74  MOV A,#20          ACC=20 PSW=00 SP=07 DPTR=0000
-```
+## License
 
-UART output from the firmware:
-```
-UART baud: 9600
-Hello from 8051!
-```
-
-GPIO port writes:
-```
-P1: level=0x55 mask=0xFF
-```
-
-Performance metrics at completion:
-```
-Metrics: steps=100000 wall=50.123 ms emu=9.050 ms speed=1995000.00 steps/s
-```
-
-## Building
-
-Prerequisites:
-- CMake 3.10 or later
-- C11-compatible compiler (gcc, clang)
-- Make or Ninja
-
-Build steps:
-```bash
-mkdir -p build && cd build
-cmake ..
-make
-```
-
-This produces the `mcs51_emulator` executable in the build directory.
-
-### Running Tests
-
-Execute the test suite to verify correct operation:
-```bash
-ctest --output-on-failure
-```
-
-The tests cover instruction implementations, memory access patterns, timer behavior, and edge cases. All tests passing indicates the emulator is functioning correctly.
-
-## Debugging
-
-The emulator provides several tools for debugging firmware:
-
-- Instruction tracing (`--trace`): logs each executed instruction with corresponding CPU state
-- Register inspection: trace output displays ACC, PSW, SP, and DPTR at each step
-- Performance metrics: execution speed relative to wall clock time helps identify bottlenecks
-
-## Additional Resources
-
-- [ARCHITECTURE.md](ARCHITECTURE.md) - technical implementation details and design rationale
-- [docs/es/](docs/es/) - Spanish documentation
-- [docs/en/](docs/en/) - English documentation
+[tu licencia]
