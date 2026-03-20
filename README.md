@@ -2,6 +2,8 @@
 
 Portable MCS-51 (8051) CPU emulator written in C.
 
+This core is used to run legacy 8051 firmware on modern hardware platforms such as STM32.
+
 ## Overview
 
 This repository contains a standalone emulator core for the MCS-51 architecture.
@@ -54,11 +56,11 @@ It is intended to be used as a building block for:
 - Embedded simulation environments
 - Reverse engineering tools
 
-## Integration Example
+## Example Integration
 
 See the STM32 integration example:
 
-mcs51_emulator_h750
+https://github.com/martinribelotta/mcs51_emulator_h750
 
 This demonstrates how to:
 
@@ -68,8 +70,8 @@ This demonstrates how to:
 
 ## Status
 
-The core is stable and used in a working STM32 runtime that executes real firmware.
+The core is stable and used in a working STM32 runtime that executes real firmware with:
 
-## License
-
-[tu licencia]
+- Accurate timing
+- Functional peripherals via external mapping
+- Deterministic execution
