@@ -68,8 +68,22 @@
 #define SCON_RI  0x01
 #define SCON_TI  0x02
 
+#if defined(__GNUC__) || defined(__clang__)
+#define MCS51_LIKELY(x)   __builtin_expect(!!(x), 1)
+#define MCS51_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define MCS51_LIKELY(x)   (x)
+#define MCS51_UNLIKELY(x) (x)
+#endif
+
 static void cpu_check_interrupts(cpu_t *cpu);
 static void cpu_apply_pcon(cpu_t *cpu, uint8_t value);
+
+static cpu_run_timed_profiler_t g_run_timed_profiler = {
+    .read_cycles = NULL,
+    .on_sample = NULL,
+    .user = NULL,
+};
 
 static uint8_t sfr_get(const cpu_t *cpu, uint8_t addr)
 {
@@ -267,11 +281,11 @@ uint16_t cpu_fetch16(cpu_t *cpu)
 
 uint8_t cpu_read_direct(cpu_t *cpu, uint8_t addr)
 {
-    if (addr < 0x80) {
+    if (MCS51_LIKELY(addr < 0x80)) {
         return cpu->iram[addr];
     }
     uint8_t idx = (uint8_t)(addr - 0x80);
-    if (cpu->sfr_hooks[idx].read) {
+    if (MCS51_UNLIKELY(cpu->sfr_hooks[idx].read)) {
         void *user = cpu->sfr_hooks[idx].user;
         return cpu->sfr_hooks[idx].read(cpu, addr, user);
     }
@@ -280,12 +294,12 @@ uint8_t cpu_read_direct(cpu_t *cpu, uint8_t addr)
 
 void cpu_write_direct(cpu_t *cpu, uint8_t addr, uint8_t value)
 {
-    if (addr < 0x80) {
+    if (MCS51_LIKELY(addr < 0x80)) {
         cpu->iram[addr] = value;
         return;
     }
     uint8_t idx = (uint8_t)(addr - 0x80);
-    if (cpu->sfr_hooks[idx].write) {
+    if (MCS51_UNLIKELY(cpu->sfr_hooks[idx].write)) {
         void *user = cpu->sfr_hooks[idx].user;
         cpu->sfr_hooks[idx].write(cpu, addr, value, user);
         if (addr == SFR_PCON) {
@@ -364,229 +378,429 @@ void cpu_write_bit(cpu_t *cpu, uint8_t bit_addr, bool value)
     cpu_write_direct(cpu, byte_addr, current);
 }
 
+static const uint8_t k_opcode_cycles[256] = {
+#define X(op, mn, dst, src, size, cycles, name) [op] = cycles,
+    INSTR_LIST(X)
+#undef X
+};
+
+static const addr_mode_t k_opcode_dst_modes[256] = {
+#define X(op, mn, dst, src, size, cycles, name) [op] = dst,
+    INSTR_LIST(X)
+#undef X
+};
+
+static const addr_mode_t k_opcode_src_modes[256] = {
+#define X(op, mn, dst, src, size, cycles, name) [op] = src,
+    INSTR_LIST(X)
+#undef X
+};
+
+static inline uint8_t cpu_reg_bank_base_fast(const cpu_t *cpu)
+{
+    return (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+}
+
+static inline void cpu_add_a_fast(cpu_t *cpu, uint8_t value)
+{
+    uint8_t acc = cpu->acc;
+    uint16_t sum = (uint16_t)acc + (uint16_t)value;
+    uint8_t result = (uint8_t)sum;
+    cpu->acc = result;
+
+    uint8_t psw = cpu->psw;
+    if (sum > 0xFFu) {
+        psw |= PSW_CY;
+    } else {
+        psw &= (uint8_t)~PSW_CY;
+    }
+    if (((acc & 0x0Fu) + (value & 0x0Fu)) > 0x0Fu) {
+        psw |= PSW_AC;
+    } else {
+        psw &= (uint8_t)~PSW_AC;
+    }
+    if (((~(acc ^ value)) & (acc ^ result) & 0x80u) != 0u) {
+        psw |= PSW_OV;
+    } else {
+        psw &= (uint8_t)~PSW_OV;
+    }
+    cpu->psw = psw;
+}
+
 uint8_t cpu_step(cpu_t *cpu)
 {
-    if (cpu->power_down || cpu->idle) {
+    if (MCS51_UNLIKELY(cpu->power_down || cpu->idle)) {
         return 0;
     }
-    if (cpu->halted) {
+    if (MCS51_UNLIKELY(cpu->halted)) {
         return 0;
     }
 
     uint16_t pc_before = cpu->pc;
     uint8_t opcode = cpu_fetch8(cpu);
     cpu->last_opcode = opcode;
+    uint8_t acc_before = cpu->acc;
+    uint8_t cycles = k_opcode_cycles[opcode];
+    addr_mode_t dst_mode = k_opcode_dst_modes[opcode];
+    addr_mode_t src_mode = k_opcode_src_modes[opcode];
 
-    instr_desc_t desc = decode(opcode);
-    if (desc.mnemonic == MN_INVALID) {
-        cpu->halted = true;
-        cpu->halt_reason = "UNDEFINED";
-        return 0;
-    }
-    uint8_t cycles = desc.cycles;
-
-    if (cpu->trace_enabled && cpu->trace_fn) {
+    if (MCS51_UNLIKELY(cpu->trace_enabled && cpu->trace_fn)) {
         cpu->trace_fn(cpu, pc_before, opcode, opcode_name(opcode), cpu->trace_user);
     }
 
-    if (desc.mnemonic == MN_MOV_DIRECT_DIRECT) {
-        op_t src = fetch_operand(cpu, AM_DIRECT, opcode);
-        op_t dst = fetch_operand(cpu, AM_DIRECT, opcode);
-        exec_mov_direct_direct(cpu, src, dst);
-        return cpu->halted ? 0 : cycles;
-    }
-
-    if (desc.mnemonic == MN_MOV_DPTR_IMM) {
-        uint16_t value = cpu_fetch16(cpu);
-        exec_mov_dptr_imm(cpu, value);
-        return cpu->halted ? 0 : cycles;
-    }
-
-    if (desc.mnemonic == MN_CJNE_A_IMM ||
-        desc.mnemonic == MN_CJNE_A_DIRECT ||
-        desc.mnemonic == MN_CJNE_AT_RI_IMM ||
-        desc.mnemonic == MN_CJNE_RN_IMM) {
-        switch (desc.mnemonic) {
-        case MN_CJNE_A_IMM: {
-            op_t rhs = fetch_operand(cpu, AM_IMM8, opcode);
-            op_t rel = fetch_operand(cpu, AM_REL8, opcode);
-            exec_cjne(cpu, (op_t){ AM_A, 0 }, rhs, rel);
-            break; }
-        case MN_CJNE_A_DIRECT: {
-            op_t rhs = fetch_operand(cpu, AM_DIRECT, opcode);
-            op_t rel = fetch_operand(cpu, AM_REL8, opcode);
-            exec_cjne(cpu, (op_t){ AM_A, 0 }, rhs, rel);
-            break; }
-        case MN_CJNE_AT_RI_IMM: {
-            op_t lhs = fetch_operand(cpu, AM_AT_RI, opcode);
-            op_t rhs = fetch_operand(cpu, AM_IMM8, opcode);
-            op_t rel = fetch_operand(cpu, AM_REL8, opcode);
-            exec_cjne(cpu, lhs, rhs, rel);
-            break; }
-        case MN_CJNE_RN_IMM: {
-            op_t lhs = fetch_operand(cpu, AM_RN, opcode);
-            op_t rhs = fetch_operand(cpu, AM_IMM8, opcode);
-            op_t rel = fetch_operand(cpu, AM_REL8, opcode);
-            exec_cjne(cpu, lhs, rhs, rel);
-            break; }
-        default:
-            cpu->halted = true;
-            break;
+    switch (opcode) {
+    case 0x04: /* INC A */
+        cpu->acc = (uint8_t)(cpu->acc + 1u);
+        goto finalize_step;
+    case 0x05: { /* INC direct */
+        uint8_t direct = cpu_fetch8(cpu);
+        uint8_t value = (uint8_t)(cpu_read_direct(cpu, direct) + 1u);
+        cpu_write_direct(cpu, direct, value);
+        goto finalize_step; }
+    case 0x14: /* DEC A */
+        cpu->acc = (uint8_t)(cpu->acc - 1u);
+        goto finalize_step;
+    case 0x15: { /* DEC direct */
+        uint8_t direct = cpu_fetch8(cpu);
+        uint8_t value = (uint8_t)(cpu_read_direct(cpu, direct) - 1u);
+        cpu_write_direct(cpu, direct, value);
+        goto finalize_step; }
+    case 0x24: { /* ADD A,#imm */
+        cpu_add_a_fast(cpu, cpu_fetch8(cpu));
+        goto finalize_step; }
+    case 0x60: { /* JZ rel */
+        int8_t rel = (int8_t)cpu_fetch8(cpu);
+        if (cpu->acc == 0) {
+            cpu->pc = (uint16_t)(cpu->pc + rel);
         }
-        return cpu->halted ? 0 : cycles;
-    }
-
-    op_t dst = fetch_operand(cpu, desc.dst_mode, opcode);
-    op_t src = fetch_operand(cpu, desc.src_mode, opcode);
-
-    switch (desc.mnemonic) {
-    case MN_NOP:
-        exec_nop(cpu);
-        break;
-    case MN_MOV:
-        exec_mov(cpu, dst, src);
-        break;
-    case MN_SUBB:
-        exec_subb(cpu, src);
-        break;
-    case MN_ADD:
-        exec_add(cpu, src);
-        break;
-    case MN_ADDC:
-        exec_addc(cpu, src);
-        break;
-    case MN_ANL:
-        exec_anl(cpu, dst, src);
-        break;
-    case MN_ORL:
-        exec_orl(cpu, dst, src);
-        break;
-    case MN_XRL:
-        exec_xrl(cpu, dst, src);
-        break;
-    case MN_DA:
-        exec_da(cpu);
-        break;
-    case MN_MUL:
-        exec_mul(cpu);
-        break;
-    case MN_DIV:
-        exec_div(cpu);
-        break;
-    case MN_RR:
-        exec_rr(cpu);
-        break;
-    case MN_RRC:
-        exec_rrc(cpu);
-        break;
-    case MN_RL:
-        exec_rl(cpu);
-        break;
-    case MN_RLC:
-        exec_rlc(cpu);
-        break;
-    case MN_SWAP:
-        exec_swap(cpu);
-        break;
-    case MN_INC:
-        exec_inc(cpu, dst);
-        break;
-    case MN_DEC:
-        exec_dec(cpu, dst);
-        break;
-    case MN_JC:
-        exec_jc(cpu, dst);
-        break;
-    case MN_JNC:
-        exec_jnc(cpu, dst);
-        break;
-    case MN_JZ:
-        exec_jz(cpu, dst);
-        break;
-    case MN_JNZ:
-        exec_jnz(cpu, dst);
-        break;
-    case MN_JB:
-        exec_jb(cpu, dst, src);
-        break;
-    case MN_JBC:
-        exec_jbc(cpu, dst, src);
-        break;
-    case MN_JNB:
-        exec_jnb(cpu, dst, src);
-        break;
-    case MN_DJNZ:
-        exec_djnz(cpu, dst, src);
-        break;
-    case MN_JMPA_DPTR:
-        exec_jmpa_dptr(cpu);
-        break;
-    case MN_SJMP:
-        exec_sjmp(cpu, dst);
-        break;
-    case MN_AJMP:
-        exec_ajmp(cpu, dst);
-        break;
-    case MN_ACALL:
-        exec_acall(cpu, dst);
-        break;
-    case MN_LJMP:
-        exec_ljmp(cpu, dst);
-        break;
-    case MN_LCALL:
-        exec_lcall(cpu, dst);
-        break;
-    case MN_SETB:
-        exec_setb(cpu, dst);
-        break;
-    case MN_CLR:
-        exec_clr(cpu, dst);
-        break;
-    case MN_CPL:
-        exec_cpl(cpu, dst);
-        break;
-    case MN_MOVC_A_DPTR:
-        exec_movc_a_dptr(cpu);
-        break;
-    case MN_MOVC_A_PC:
-        exec_movc_a_pc(cpu);
-        break;
-    case MN_MOVX_A_DPTR:
-        exec_movx_a_dptr(cpu);
-        break;
-    case MN_MOVX_DPTR_A:
-        exec_movx_dptr_a(cpu);
-        break;
-    case MN_MOVX_A_AT_RI:
-        exec_movx_a_at_ri(cpu, dst);
-        break;
-    case MN_MOVX_AT_RI_A:
-        exec_movx_at_ri_a(cpu, dst);
-        break;
-    case MN_XCH:
-        exec_xch(cpu, dst);
-        break;
-    case MN_XCHD:
-        exec_xchd(cpu, dst);
-        break;
-    case MN_RET:
-        exec_ret(cpu);
-        break;
-    case MN_RETI:
-        exec_reti(cpu);
-        break;
-    case MN_PUSH:
-        exec_push(cpu, dst);
-        break;
-    case MN_POP:
-        exec_pop(cpu, dst);
-        break;
+        goto finalize_step; }
+    case 0x70: { /* JNZ rel */
+        int8_t rel = (int8_t)cpu_fetch8(cpu);
+        if (cpu->acc != 0) {
+            cpu->pc = (uint16_t)(cpu->pc + rel);
+        }
+        goto finalize_step; }
+    case 0x74: /* MOV A,#imm */
+        cpu->acc = cpu_fetch8(cpu);
+        goto finalize_step;
+    case 0x75: { /* MOV direct,#imm */
+        uint8_t direct = cpu_fetch8(cpu);
+        cpu_write_direct(cpu, direct, cpu_fetch8(cpu));
+        goto finalize_step; }
+    case 0x80: { /* SJMP rel */
+        int8_t rel = (int8_t)cpu_fetch8(cpu);
+        cpu->pc = (uint16_t)(cpu->pc + rel);
+        goto finalize_step; }
+    case 0xE4: /* CLR A */
+        cpu->acc = 0;
+        goto finalize_step;
+    case 0xE5: { /* MOV A,direct */
+        uint8_t direct = cpu_fetch8(cpu);
+        cpu->acc = cpu_read_direct(cpu, direct);
+        goto finalize_step; }
+    case 0xF4: /* CPL A */
+        cpu->acc = (uint8_t)~cpu->acc;
+        goto finalize_step;
+    case 0xF5: { /* MOV direct,A */
+        uint8_t direct = cpu_fetch8(cpu);
+        cpu_write_direct(cpu, direct, cpu->acc);
+        goto finalize_step; }
     default:
-        cpu->halted = true;
         break;
     }
+
+    if ((opcode & 0xF8u) == 0x08u) { /* INC Rn */
+        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
+        cpu->iram[idx] = (uint8_t)(cpu->iram[idx] + 1u);
+        goto finalize_step;
+    }
+    if ((opcode & 0xF8u) == 0x18u) { /* DEC Rn */
+        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
+        cpu->iram[idx] = (uint8_t)(cpu->iram[idx] - 1u);
+        goto finalize_step;
+    }
+    if ((opcode & 0xF8u) == 0x28u) { /* ADD A,Rn */
+        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
+        cpu_add_a_fast(cpu, cpu->iram[idx]);
+        goto finalize_step;
+    }
+    if ((opcode & 0xF8u) == 0x78u) { /* MOV Rn,#imm */
+        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
+        cpu->iram[idx] = cpu_fetch8(cpu);
+        goto finalize_step;
+    }
+    if ((opcode & 0xF8u) == 0x88u) { /* MOV direct,Rn */
+        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
+        uint8_t direct = cpu_fetch8(cpu);
+        cpu_write_direct(cpu, direct, cpu->iram[idx]);
+        goto finalize_step;
+    }
+    if ((opcode & 0xF8u) == 0xA8u) { /* MOV Rn,direct */
+        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
+        uint8_t direct = cpu_fetch8(cpu);
+        cpu->iram[idx] = cpu_read_direct(cpu, direct);
+        goto finalize_step;
+    }
+    if ((opcode & 0xF8u) == 0xD8u) { /* DJNZ Rn,rel */
+        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
+        int8_t rel = (int8_t)cpu_fetch8(cpu);
+        uint8_t value = (uint8_t)(cpu->iram[idx] - 1u);
+        cpu->iram[idx] = value;
+        if (value != 0u) {
+            cpu->pc = (uint16_t)(cpu->pc + rel);
+        }
+        goto finalize_step;
+    }
+    if ((opcode & 0xF8u) == 0xE8u) { /* MOV A,Rn */
+        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
+        cpu->acc = cpu->iram[idx];
+        goto finalize_step;
+    }
+    if ((opcode & 0xF8u) == 0xF8u) { /* MOV Rn,A */
+        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
+        cpu->iram[idx] = cpu->acc;
+        goto finalize_step;
+    }
+
+#if defined(__GNUC__) || defined(__clang__)
+#define X(op, mn, dst, src, size, cycles, name) [op] = &&LBL_##mn,
+    static void *const k_dispatch[256] = {
+        INSTR_LIST(X)
+    };
+#undef X
+
+    goto *k_dispatch[opcode];
+
+LBL_MN_INVALID:
+    cpu->halted = true;
+    cpu->halt_reason = "UNDEFINED";
+    goto finalize_step;
+
+LBL_MN_NOP:
+    exec_nop(cpu);
+    goto finalize_step;
+LBL_MN_MOV: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    op_t src = fetch_operand(cpu, src_mode, opcode);
+    exec_mov(cpu, dst, src);
+    goto finalize_step; }
+LBL_MN_MOV_DIRECT_DIRECT: {
+    op_t src = fetch_operand(cpu, AM_DIRECT, opcode);
+    op_t dst = fetch_operand(cpu, AM_DIRECT, opcode);
+    exec_mov_direct_direct(cpu, src, dst);
+    goto finalize_step; }
+LBL_MN_MOV_DPTR_IMM: {
+    uint16_t value = cpu_fetch16(cpu);
+    exec_mov_dptr_imm(cpu, value);
+    goto finalize_step; }
+LBL_MN_ADD: {
+    op_t src = fetch_operand(cpu, src_mode, opcode);
+    exec_add(cpu, src);
+    goto finalize_step; }
+LBL_MN_ADDC: {
+    op_t src = fetch_operand(cpu, src_mode, opcode);
+    exec_addc(cpu, src);
+    goto finalize_step; }
+LBL_MN_SUBB: {
+    op_t src = fetch_operand(cpu, src_mode, opcode);
+    exec_subb(cpu, src);
+    goto finalize_step; }
+LBL_MN_ANL: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    op_t src = fetch_operand(cpu, src_mode, opcode);
+    exec_anl(cpu, dst, src);
+    goto finalize_step; }
+LBL_MN_ORL: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    op_t src = fetch_operand(cpu, src_mode, opcode);
+    exec_orl(cpu, dst, src);
+    goto finalize_step; }
+LBL_MN_XRL: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    op_t src = fetch_operand(cpu, src_mode, opcode);
+    exec_xrl(cpu, dst, src);
+    goto finalize_step; }
+LBL_MN_DA:
+    exec_da(cpu);
+    goto finalize_step;
+LBL_MN_MUL:
+    exec_mul(cpu);
+    goto finalize_step;
+LBL_MN_DIV:
+    exec_div(cpu);
+    goto finalize_step;
+LBL_MN_RR:
+    exec_rr(cpu);
+    goto finalize_step;
+LBL_MN_RRC:
+    exec_rrc(cpu);
+    goto finalize_step;
+LBL_MN_RL:
+    exec_rl(cpu);
+    goto finalize_step;
+LBL_MN_RLC:
+    exec_rlc(cpu);
+    goto finalize_step;
+LBL_MN_SWAP:
+    exec_swap(cpu);
+    goto finalize_step;
+LBL_MN_INC: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    exec_inc(cpu, dst);
+    goto finalize_step; }
+LBL_MN_DEC: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    exec_dec(cpu, dst);
+    goto finalize_step; }
+LBL_MN_JC: {
+    op_t rel = fetch_operand(cpu, dst_mode, opcode);
+    exec_jc(cpu, rel);
+    goto finalize_step; }
+LBL_MN_JNC: {
+    op_t rel = fetch_operand(cpu, dst_mode, opcode);
+    exec_jnc(cpu, rel);
+    goto finalize_step; }
+LBL_MN_JZ: {
+    op_t rel = fetch_operand(cpu, dst_mode, opcode);
+    exec_jz(cpu, rel);
+    goto finalize_step; }
+LBL_MN_JNZ: {
+    op_t rel = fetch_operand(cpu, dst_mode, opcode);
+    exec_jnz(cpu, rel);
+    goto finalize_step; }
+LBL_MN_JB: {
+    op_t bit = fetch_operand(cpu, dst_mode, opcode);
+    op_t rel = fetch_operand(cpu, src_mode, opcode);
+    exec_jb(cpu, bit, rel);
+    goto finalize_step; }
+LBL_MN_JBC: {
+    op_t bit = fetch_operand(cpu, dst_mode, opcode);
+    op_t rel = fetch_operand(cpu, src_mode, opcode);
+    exec_jbc(cpu, bit, rel);
+    goto finalize_step; }
+LBL_MN_JNB: {
+    op_t bit = fetch_operand(cpu, dst_mode, opcode);
+    op_t rel = fetch_operand(cpu, src_mode, opcode);
+    exec_jnb(cpu, bit, rel);
+    goto finalize_step; }
+LBL_MN_DJNZ: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    op_t rel = fetch_operand(cpu, src_mode, opcode);
+    exec_djnz(cpu, dst, rel);
+    goto finalize_step; }
+LBL_MN_CJNE_A_IMM: {
+    op_t rhs = fetch_operand(cpu, AM_IMM8, opcode);
+    op_t rel = fetch_operand(cpu, AM_REL8, opcode);
+    exec_cjne(cpu, (op_t){ AM_A, 0 }, rhs, rel);
+    goto finalize_step; }
+LBL_MN_CJNE_A_DIRECT: {
+    op_t rhs = fetch_operand(cpu, AM_DIRECT, opcode);
+    op_t rel = fetch_operand(cpu, AM_REL8, opcode);
+    exec_cjne(cpu, (op_t){ AM_A, 0 }, rhs, rel);
+    goto finalize_step; }
+LBL_MN_CJNE_AT_RI_IMM: {
+    op_t lhs = fetch_operand(cpu, AM_AT_RI, opcode);
+    op_t rhs = fetch_operand(cpu, AM_IMM8, opcode);
+    op_t rel = fetch_operand(cpu, AM_REL8, opcode);
+    exec_cjne(cpu, lhs, rhs, rel);
+    goto finalize_step; }
+LBL_MN_CJNE_RN_IMM: {
+    op_t lhs = fetch_operand(cpu, AM_RN, opcode);
+    op_t rhs = fetch_operand(cpu, AM_IMM8, opcode);
+    op_t rel = fetch_operand(cpu, AM_REL8, opcode);
+    exec_cjne(cpu, lhs, rhs, rel);
+    goto finalize_step; }
+LBL_MN_JMPA_DPTR:
+    exec_jmpa_dptr(cpu);
+    goto finalize_step;
+LBL_MN_SJMP: {
+    op_t rel = fetch_operand(cpu, dst_mode, opcode);
+    exec_sjmp(cpu, rel);
+    goto finalize_step; }
+LBL_MN_AJMP: {
+    op_t addr11 = fetch_operand(cpu, dst_mode, opcode);
+    exec_ajmp(cpu, addr11);
+    goto finalize_step; }
+LBL_MN_ACALL: {
+    op_t addr11 = fetch_operand(cpu, dst_mode, opcode);
+    exec_acall(cpu, addr11);
+    goto finalize_step; }
+LBL_MN_LJMP: {
+    op_t addr16 = fetch_operand(cpu, dst_mode, opcode);
+    exec_ljmp(cpu, addr16);
+    goto finalize_step; }
+LBL_MN_LCALL: {
+    op_t addr16 = fetch_operand(cpu, dst_mode, opcode);
+    exec_lcall(cpu, addr16);
+    goto finalize_step; }
+LBL_MN_SETB: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    exec_setb(cpu, dst);
+    goto finalize_step; }
+LBL_MN_CLR: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    exec_clr(cpu, dst);
+    goto finalize_step; }
+LBL_MN_CPL: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    exec_cpl(cpu, dst);
+    goto finalize_step; }
+LBL_MN_MOVC_A_DPTR:
+    exec_movc_a_dptr(cpu);
+    goto finalize_step;
+LBL_MN_MOVC_A_PC:
+    exec_movc_a_pc(cpu);
+    goto finalize_step;
+LBL_MN_MOVX_A_DPTR:
+    exec_movx_a_dptr(cpu);
+    goto finalize_step;
+LBL_MN_MOVX_DPTR_A:
+    exec_movx_dptr_a(cpu);
+    goto finalize_step;
+LBL_MN_MOVX_A_AT_RI: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    exec_movx_a_at_ri(cpu, dst);
+    goto finalize_step; }
+LBL_MN_MOVX_AT_RI_A: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    exec_movx_at_ri_a(cpu, dst);
+    goto finalize_step; }
+LBL_MN_XCH: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    exec_xch(cpu, dst);
+    goto finalize_step; }
+LBL_MN_XCHD: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    exec_xchd(cpu, dst);
+    goto finalize_step; }
+LBL_MN_RET:
+    exec_ret(cpu);
+    goto finalize_step;
+LBL_MN_RETI:
+    exec_reti(cpu);
+    goto finalize_step;
+LBL_MN_PUSH: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    exec_push(cpu, dst);
+    goto finalize_step; }
+LBL_MN_POP: {
+    op_t dst = fetch_operand(cpu, dst_mode, opcode);
+    exec_pop(cpu, dst);
+    goto finalize_step; }
+#else
+    const instr_desc_t *desc = decode_ptr(opcode);
+    if (MCS51_UNLIKELY(desc->mnemonic == MN_INVALID)) {
+        cpu->halted = true;
+        cpu->halt_reason = "UNDEFINED";
+        goto finalize_step;
+    }
+#endif
+
+finalize_step:
     if (!cpu->halted) {
-        cpu_update_parity(cpu);
+        if (cpu->acc != acc_before) {
+            cpu_update_parity(cpu);
+        }
     }
     if (!cpu->halted) {
         cpu_check_interrupts(cpu);
@@ -643,7 +857,21 @@ uint64_t cpu_run_timed(cpu_t *cpu,
         if (max_steps != 0 && steps >= max_steps) {
             break;
         }
+
+        bool prof_enabled = g_run_timed_profiler.read_cycles && g_run_timed_profiler.on_sample;
+        uint32_t t0 = 0;
+        uint32_t t1 = 0;
+        uint32_t t2 = 0;
+        uint32_t t3 = 0;
+        if (prof_enabled) {
+            t0 = g_run_timed_profiler.read_cycles(g_run_timed_profiler.user);
+        }
+
         uint8_t cycles = cpu_step(cpu);
+        if (prof_enabled) {
+            t1 = g_run_timed_profiler.read_cycles(g_run_timed_profiler.user);
+        }
+
         if (cycles == 0) {
             if (cpu->idle && !cpu->power_down) {
                 cycles = 1;
@@ -651,12 +879,17 @@ uint64_t cpu_run_timed(cpu_t *cpu,
                 break;
             }
         }
+
         for (uint8_t i = 0; i < cpu->tick_hook_count; ++i) {
             const cpu_tick_entry_t *entry = &cpu->tick_hooks[i];
             if (entry->fn) {
                 entry->fn(cpu, cycles, entry->user);
             }
         }
+        if (prof_enabled) {
+            t2 = g_run_timed_profiler.read_cycles(g_run_timed_profiler.user);
+        }
+
         timing_step(timing_state, cycles);
         if (cpu->idle && !cpu->power_down) {
             cpu_check_interrupts(cpu);
@@ -671,8 +904,29 @@ uint64_t cpu_run_timed(cpu_t *cpu,
                 time_iface->sleep_ns(target_ns - elapsed_ns, time_iface->user);
             }
         }
+
+        if (prof_enabled) {
+            t3 = g_run_timed_profiler.read_cycles(g_run_timed_profiler.user);
+            g_run_timed_profiler.on_sample(t1 - t0,
+                                           t2 - t1,
+                                           t3 - t2,
+                                           t3 - t0,
+                                           cycles,
+                                           g_run_timed_profiler.user);
+        }
     }
     return steps;
+}
+
+void cpu_set_run_timed_profiler(const cpu_run_timed_profiler_t *profiler)
+{
+    if (!profiler) {
+        g_run_timed_profiler.read_cycles = NULL;
+        g_run_timed_profiler.on_sample = NULL;
+        g_run_timed_profiler.user = NULL;
+        return;
+    }
+    g_run_timed_profiler = *profiler;
 }
 
 void cpu_set_trace(cpu_t *cpu, bool enabled, cpu_trace_fn fn, void *user)
@@ -793,69 +1047,6 @@ void cpu_wake(cpu_t *cpu)
     sfr_set(cpu, SFR_PCON, pcon);
 }
 
-static bool cpu_interrupt_pending(cpu_t *cpu, int src, uint8_t *out_prio, uint16_t *out_vector)
-{
-    if (cpu->power_down) {
-        return false;
-    }
-    uint8_t ie = sfr_get(cpu, SFR_IE);
-    uint8_t ip = sfr_get(cpu, SFR_IP);
-    uint8_t tcon = sfr_get(cpu, SFR_TCON);
-    uint8_t scon = sfr_get(cpu, SFR_SCON);
-
-    if ((ie & IE_EA) == 0) {
-        return false;
-    }
-
-    switch (src) {
-    case 0: { /* INT0 */
-        if ((ie & IE_EX0) && (tcon & TCON_IE0)) {
-            *out_prio = (ip & IP_PX0) ? 1u : 0u;
-            *out_vector = 0x0003;
-            return true;
-        }
-        break; }
-    case 1: { /* T0 */
-        if ((ie & IE_ET0) && (tcon & TCON_TF0)) {
-            *out_prio = (ip & IP_PT0) ? 1u : 0u;
-            *out_vector = 0x000B;
-            return true;
-        }
-        break; }
-    case 2: { /* INT1 */
-        if ((ie & IE_EX1) && (tcon & TCON_IE1)) {
-            *out_prio = (ip & IP_PX1) ? 1u : 0u;
-            *out_vector = 0x0013;
-            return true;
-        }
-        break; }
-    case 3: { /* T1 */
-        if ((ie & IE_ET1) && (tcon & TCON_TF1)) {
-            *out_prio = (ip & IP_PT1) ? 1u : 0u;
-            *out_vector = 0x001B;
-            return true;
-        }
-        break; }
-    case 4: { /* SERIAL */
-        if ((ie & IE_ES) && (scon & (SCON_RI | SCON_TI))) {
-            *out_prio = (ip & IP_PS) ? 1u : 0u;
-            *out_vector = 0x0023;
-            return true;
-        }
-        break; }
-    case 5: { /* T2 */
-        if ((ie & IE_ET2) && (sfr_get(cpu, SFR_T2CON) & (T2CON_TF2 | T2CON_EXF2))) {
-            *out_prio = (ip & IP_PT2) ? 1u : 0u;
-            *out_vector = 0x002B;
-            return true;
-        }
-        break; }
-    default:
-        break;
-    }
-    return false;
-}
-
 static void cpu_service_interrupt(cpu_t *cpu, int src, uint8_t prio, uint16_t vector)
 {
     if (cpu->idle) {
@@ -919,23 +1110,66 @@ static void cpu_check_interrupts(cpu_t *cpu)
         return;
     }
 
+    uint8_t ie = sfr_get(cpu, SFR_IE);
+    if ((ie & IE_EA) == 0) {
+        return;
+    }
+
+    uint8_t ip = sfr_get(cpu, SFR_IP);
+    uint8_t tcon = sfr_get(cpu, SFR_TCON);
+    uint8_t scon = sfr_get(cpu, SFR_SCON);
+    uint8_t t2con = sfr_get(cpu, SFR_T2CON);
+
     uint8_t best_prio = 0;
     uint16_t best_vec = 0;
     int best_src = -1;
 
-    for (int src = 0; src < 6; ++src) {
-        uint8_t prio = 0;
-        uint16_t vec = 0;
-        if (!cpu_interrupt_pending(cpu, src, &prio, &vec)) {
-            continue;
-        }
-        if (cpu->in_isr && prio <= cpu->isr_prio) {
-            continue;
-        }
-        if (best_src < 0 || prio > best_prio) {
-            best_src = src;
+    if ((ie & IE_EX0) && (tcon & TCON_IE0)) {
+        uint8_t prio = (ip & IP_PX0) ? 1u : 0u;
+        if (!cpu->in_isr || prio > cpu->isr_prio) {
+            best_src = 0;
             best_prio = prio;
-            best_vec = vec;
+            best_vec = 0x0003;
+        }
+    }
+    if ((ie & IE_ET0) && (tcon & TCON_TF0)) {
+        uint8_t prio = (ip & IP_PT0) ? 1u : 0u;
+        if ((!cpu->in_isr || prio > cpu->isr_prio) && (best_src < 0 || prio > best_prio)) {
+            best_src = 1;
+            best_prio = prio;
+            best_vec = 0x000B;
+        }
+    }
+    if ((ie & IE_EX1) && (tcon & TCON_IE1)) {
+        uint8_t prio = (ip & IP_PX1) ? 1u : 0u;
+        if ((!cpu->in_isr || prio > cpu->isr_prio) && (best_src < 0 || prio > best_prio)) {
+            best_src = 2;
+            best_prio = prio;
+            best_vec = 0x0013;
+        }
+    }
+    if ((ie & IE_ET1) && (tcon & TCON_TF1)) {
+        uint8_t prio = (ip & IP_PT1) ? 1u : 0u;
+        if ((!cpu->in_isr || prio > cpu->isr_prio) && (best_src < 0 || prio > best_prio)) {
+            best_src = 3;
+            best_prio = prio;
+            best_vec = 0x001B;
+        }
+    }
+    if ((ie & IE_ES) && (scon & (SCON_RI | SCON_TI))) {
+        uint8_t prio = (ip & IP_PS) ? 1u : 0u;
+        if ((!cpu->in_isr || prio > cpu->isr_prio) && (best_src < 0 || prio > best_prio)) {
+            best_src = 4;
+            best_prio = prio;
+            best_vec = 0x0023;
+        }
+    }
+    if ((ie & IE_ET2) && (t2con & (T2CON_TF2 | T2CON_EXF2))) {
+        uint8_t prio = (ip & IP_PT2) ? 1u : 0u;
+        if ((!cpu->in_isr || prio > cpu->isr_prio) && (best_src < 0 || prio > best_prio)) {
+            best_src = 5;
+            best_prio = prio;
+            best_vec = 0x002B;
         }
     }
 

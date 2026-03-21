@@ -378,11 +378,9 @@ bool timers_input_sample_now(timers_t *timers, uint8_t input_id, bool level)
     return timers_input_sample(timers, input_id, level, timers->cycles_total);
 }
 
-static void timers_tick_timer0(timers_t *timers, uint32_t cycles)
+static void timers_tick_timer0_cached(timers_t *timers, uint32_t cycles, uint8_t tmod, uint8_t tcon)
 {
     cpu_t *cpu = timers->cpu;
-    uint8_t tmod = sfr_get(cpu, SFR_TMOD);
-    uint8_t tcon = sfr_get(cpu, SFR_TCON);
     uint8_t mode = t0_mode(tmod);
     bool gate = (tmod & TMOD_GATE0) != 0;
     bool ct = (tmod & TMOD_CT0) != 0;
@@ -411,11 +409,9 @@ static void timers_tick_timer0(timers_t *timers, uint32_t cycles)
     }
 }
 
-static void timers_tick_timer1(timers_t *timers, uint32_t cycles)
+static void timers_tick_timer1_cached(timers_t *timers, uint32_t cycles, uint8_t tmod, uint8_t tcon)
 {
     cpu_t *cpu = timers->cpu;
-    uint8_t tmod = sfr_get(cpu, SFR_TMOD);
-    uint8_t tcon = sfr_get(cpu, SFR_TCON);
     uint8_t t0mode = t0_mode(tmod);
     uint8_t mode = t1_mode(tmod);
     bool gate = (tmod & TMOD_GATE1) != 0;
@@ -450,10 +446,8 @@ static void timers_tick_timer1(timers_t *timers, uint32_t cycles)
     }
 }
 
-static void timers_tick_timer2(timers_t *timers, uint32_t cycles)
+static void timers_tick_timer2_cached(timers_t *timers, uint32_t cycles, uint8_t t2con)
 {
-    cpu_t *cpu = timers->cpu;
-    uint8_t t2con = sfr_get(cpu, SFR_T2CON);
     bool tr2 = (t2con & T2CON_TR2) != 0;
     bool ct2 = (t2con & T2CON_CT2) != 0;
 
@@ -466,11 +460,16 @@ static void timers_tick_timer2(timers_t *timers, uint32_t cycles)
 
 static void timers_advance_cycles(timers_t *timers, uint64_t delta)
 {
+    cpu_t *cpu = timers->cpu;
     while (delta > 0) {
         uint32_t chunk = delta > UINT_MAX ? UINT_MAX : (uint32_t)delta;
-        timers_tick_timer0(timers, chunk);
-        timers_tick_timer1(timers, chunk);
-        timers_tick_timer2(timers, chunk);
+        uint8_t tmod = sfr_get(cpu, SFR_TMOD);
+        uint8_t tcon = sfr_get(cpu, SFR_TCON);
+        uint8_t t2con = sfr_get(cpu, SFR_T2CON);
+
+        timers_tick_timer0_cached(timers, chunk, tmod, tcon);
+        timers_tick_timer1_cached(timers, chunk, tmod, tcon);
+        timers_tick_timer2_cached(timers, chunk, t2con);
         delta -= chunk;
     }
 }

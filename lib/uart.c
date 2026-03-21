@@ -232,6 +232,10 @@ void uart_tick(uart_t *uart, uint32_t cycles)
         return;
     }
 
+    if (!uart->tx_busy && !uart->rx_pending) {
+        return;
+    }
+
     uint8_t scon = sfr_get(uart->cpu, SFR_SCON);
     if ((scon & SCON_REN) == 0) {
         uart->rx_pending = false;

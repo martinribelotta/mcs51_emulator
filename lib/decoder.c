@@ -2,7 +2,7 @@
 #include "instr_list.h"
 #include <stddef.h>
 
-static uint8_t reg_bank_base(cpu_t *cpu)
+static inline uint8_t reg_bank_base(cpu_t *cpu)
 {
     uint8_t bank = (uint8_t)((cpu->psw >> 3) & 0x03);
     return (uint8_t)(bank * 8);
@@ -79,7 +79,12 @@ static const char *const k_mnemonic_names[] = {
 
 instr_desc_t decode(uint8_t opcode)
 {
-    return k_instr_table[opcode];
+    return *decode_ptr(opcode);
+}
+
+const instr_desc_t *decode_ptr(uint8_t opcode)
+{
+    return &k_instr_table[opcode];
 }
 
 const char *opcode_name(uint8_t opcode)

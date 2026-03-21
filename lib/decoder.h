@@ -91,6 +91,7 @@ typedef struct {
 } instr_desc_t;
 
 instr_desc_t decode(uint8_t opcode);
+const instr_desc_t *decode_ptr(uint8_t opcode);
 const char *opcode_name(uint8_t opcode);
 const char *mnemonic_name(mnemonic_t mnemonic);
 

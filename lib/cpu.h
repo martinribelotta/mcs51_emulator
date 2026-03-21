@@ -40,6 +40,20 @@ typedef struct {
     void *user;
 } cpu_time_iface_t;
 
+typedef uint32_t (*cpu_prof_read_cycles_fn)(void *user);
+typedef void (*cpu_run_timed_sample_fn)(uint32_t step_cycles,
+                                        uint32_t hook_cycles,
+                                        uint32_t timing_cycles,
+                                        uint32_t total_cycles,
+                                        uint8_t emu_cycles,
+                                        void *user);
+
+typedef struct {
+    cpu_prof_read_cycles_fn read_cycles;
+    cpu_run_timed_sample_fn on_sample;
+    void *user;
+} cpu_run_timed_profiler_t;
+
 typedef uint8_t (*sfr_read_hook)(const cpu_t *cpu, uint8_t addr, void *user);
 typedef void (*sfr_write_hook)(cpu_t *cpu, uint8_t addr, uint8_t value, void *user);
 
@@ -151,6 +165,7 @@ uint64_t cpu_run_timed(cpu_t *cpu,
                        const timing_config_t *timing_cfg,
                        timing_state_t *timing_state,
                        const cpu_time_iface_t *time_iface);
+void cpu_set_run_timed_profiler(const cpu_run_timed_profiler_t *profiler);
 void cpu_set_trace(cpu_t *cpu, bool enabled, cpu_trace_fn fn, void *user);
 void cpu_set_sfr_hook(cpu_t *cpu, uint8_t addr, sfr_read_hook read, sfr_write_hook write, void *user);
 void cpu_set_mem_ops(cpu_t *cpu, const cpu_mem_ops_t *ops, const void *user);
