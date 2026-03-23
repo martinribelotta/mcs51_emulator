@@ -71,9 +71,11 @@
 #if defined(__GNUC__) || defined(__clang__)
 #define MCS51_LIKELY(x)   __builtin_expect(!!(x), 1)
 #define MCS51_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#define MCS51_WEAK __attribute__((weak))
 #else
 #define MCS51_LIKELY(x)   (x)
 #define MCS51_UNLIKELY(x) (x)
+#define MCS51_WEAK
 #endif
 
 static void cpu_check_interrupts(cpu_t *cpu);
@@ -93,19 +95,6 @@ static uint8_t sfr_get(const cpu_t *cpu, uint8_t addr)
 static void sfr_set(cpu_t *cpu, uint8_t addr, uint8_t value)
 {
     cpu->sfr[(uint8_t)(addr - 0x80)] = value;
-}
-
-static void cpu_update_parity(cpu_t *cpu)
-{
-    uint8_t v = cpu->acc;
-    v ^= (uint8_t)(v >> 4);
-    v ^= (uint8_t)(v >> 2);
-    v ^= (uint8_t)(v >> 1);
-    if (v & 1u) {
-        cpu->psw |= PSW_P;
-    } else {
-        cpu->psw &= (uint8_t)~PSW_P;
-    }
 }
 
 uint8_t cpu_sfr_read_acc(const cpu_t *cpu, uint8_t addr, void *user)
@@ -313,37 +302,57 @@ void cpu_write_direct(cpu_t *cpu, uint8_t addr, uint8_t value)
     }
 }
 
-uint8_t cpu_code_read(const cpu_t *cpu, uint16_t addr)
+MCS51_WEAK uint8_t emulator_code_read(const cpu_t *cpu_ctx, uint16_t code_addr)
 {
-    if (cpu->mem_ops.code_read) {
-        return cpu->mem_ops.code_read(cpu, addr, cpu->mem_user);
+    if (cpu_ctx->mem_ops.code_read) {
+        return cpu_ctx->mem_ops.code_read(cpu_ctx, code_addr, cpu_ctx->mem_user);
     }
     return 0xFF;
+}
+
+uint8_t cpu_code_read(const cpu_t *cpu, uint16_t addr)
+{
+    return emulator_code_read(cpu, addr);
+}
+
+MCS51_WEAK void emulator_code_write(cpu_t *cpu_ctx, uint16_t code_addr, uint8_t value)
+{
+    if (cpu_ctx->mem_ops.code_write) {
+        cpu_ctx->mem_ops.code_write(cpu_ctx, code_addr, value, cpu_ctx->mem_user);
+    }
 }
 
 void cpu_code_write(cpu_t *cpu, uint16_t addr, uint8_t value)
 {
-    if (cpu->mem_ops.code_write) {
-        cpu->mem_ops.code_write(cpu, addr, value, cpu->mem_user);
-    }
+    emulator_code_write(cpu, addr, value);
 }
 
-uint8_t cpu_xdata_read(const cpu_t *cpu, uint16_t addr)
+MCS51_WEAK uint8_t emulator_xdata_read(const cpu_t *cpu_ctx, uint16_t xdata_addr)
 {
-    if (cpu->mem_ops.xdata_read) {
-        return cpu->mem_ops.xdata_read(cpu, addr, cpu->mem_user);
+    if (cpu_ctx->mem_ops.xdata_read) {
+        return cpu_ctx->mem_ops.xdata_read(cpu_ctx, xdata_addr, cpu_ctx->mem_user);
     }
     return 0xFF;
 }
 
-void cpu_xdata_write(cpu_t *cpu, uint16_t addr, uint8_t value)
+uint8_t cpu_xdata_read(const cpu_t *cpu, uint16_t addr)
 {
-    if (cpu->mem_ops.xdata_write) {
-        cpu->mem_ops.xdata_write(cpu, addr, value, cpu->mem_user);
+    return emulator_xdata_read(cpu, addr);
+}
+
+MCS51_WEAK void emulator_xdata_write(cpu_t *cpu_ctx, uint16_t xdata_addr, uint8_t value)
+{
+    if (cpu_ctx->mem_ops.xdata_write) {
+        cpu_ctx->mem_ops.xdata_write(cpu_ctx, xdata_addr, value, cpu_ctx->mem_user);
     }
 }
 
-static void bit_addr_to_byte_bit(uint8_t bit_addr, uint8_t *byte_addr, uint8_t *bit_pos)
+void cpu_xdata_write(cpu_t *cpu, uint16_t addr, uint8_t value)
+{
+    emulator_xdata_write(cpu, addr, value);
+}
+
+static inline void bit_addr_to_byte_bit(uint8_t bit_addr, uint8_t *byte_addr, uint8_t *bit_pos)
 {
     if (bit_addr < 0x80) {
         uint8_t base = (uint8_t)(0x20 + ((bit_addr >> 3) & 0x0F));
@@ -384,18 +393,6 @@ static const uint8_t k_opcode_cycles[256] = {
 #undef X
 };
 
-static const addr_mode_t k_opcode_dst_modes[256] = {
-#define X(op, mn, dst, src, size, cycles, name) [op] = dst,
-    INSTR_LIST(X)
-#undef X
-};
-
-static const addr_mode_t k_opcode_src_modes[256] = {
-#define X(op, mn, dst, src, size, cycles, name) [op] = src,
-    INSTR_LIST(X)
-#undef X
-};
-
 static inline uint8_t cpu_reg_bank_base_fast(const cpu_t *cpu)
 {
     return (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
@@ -427,6 +424,9 @@ static inline void cpu_add_a_fast(cpu_t *cpu, uint8_t value)
     cpu->psw = psw;
 }
 
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((optimize("O3")))
+#endif
 uint8_t cpu_step(cpu_t *cpu)
 {
     if (MCS51_UNLIKELY(cpu->power_down || cpu->idle)) {
@@ -441,370 +441,760 @@ uint8_t cpu_step(cpu_t *cpu)
     cpu->last_opcode = opcode;
     uint8_t acc_before = cpu->acc;
     uint8_t cycles = k_opcode_cycles[opcode];
-    addr_mode_t dst_mode = k_opcode_dst_modes[opcode];
-    addr_mode_t src_mode = k_opcode_src_modes[opcode];
-
-    if (MCS51_UNLIKELY(cpu->trace_enabled && cpu->trace_fn)) {
-        cpu->trace_fn(cpu, pc_before, opcode, opcode_name(opcode), cpu->trace_user);
-    }
+    uint8_t bank = 0;
+    uint8_t addr = 0;
+    uint8_t value = 0;
+    uint8_t rhs = 0;
+    uint8_t bit = 0;
+    uint8_t idx = 0;
+    uint8_t imm = 0;
+    int8_t rel = 0;
+    uint16_t addr16 = 0;
+    uint16_t ret = 0;
+    uint8_t psw = 0;
 
     switch (opcode) {
-    case 0x04: /* INC A */
-        cpu->acc = (uint8_t)(cpu->acc + 1u);
-        goto finalize_step;
-    case 0x05: { /* INC direct */
-        uint8_t direct = cpu_fetch8(cpu);
-        uint8_t value = (uint8_t)(cpu_read_direct(cpu, direct) + 1u);
-        cpu_write_direct(cpu, direct, value);
-        goto finalize_step; }
-    case 0x14: /* DEC A */
-        cpu->acc = (uint8_t)(cpu->acc - 1u);
-        goto finalize_step;
-    case 0x15: { /* DEC direct */
-        uint8_t direct = cpu_fetch8(cpu);
-        uint8_t value = (uint8_t)(cpu_read_direct(cpu, direct) - 1u);
-        cpu_write_direct(cpu, direct, value);
-        goto finalize_step; }
-    case 0x24: { /* ADD A,#imm */
-        cpu_add_a_fast(cpu, cpu_fetch8(cpu));
-        goto finalize_step; }
-    case 0x60: { /* JZ rel */
-        int8_t rel = (int8_t)cpu_fetch8(cpu);
+    case 0x00: /* MN_NOP */
+        break;
+
+    case 0x01: /* MN_AJMP */ case 0x21: /* MN_AJMP */ case 0x41: /* MN_AJMP */ case 0x61: /* MN_AJMP */
+    case 0x81: /* MN_AJMP */ case 0xA1: /* MN_AJMP */ case 0xC1: /* MN_AJMP */ case 0xE1: /* MN_AJMP */
+        imm = cpu_fetch8(cpu);
+        addr16 = (uint16_t)(((opcode & 0xE0u) << 3) | imm);
+        cpu->pc = (uint16_t)((cpu->pc & 0xF800u) | (addr16 & 0x07FFu));
+        break;
+
+    case 0x02: /* MN_LJMP */
+        addr16 = cpu_fetch16(cpu);
+        cpu->pc = addr16;
+        break;
+
+    case 0x03: /* MN_RR */
+        cpu->acc = (uint8_t)((cpu->acc >> 1) | (cpu->acc << 7));
+        break;
+
+    case 0x04: /* MN_INC */
+        cpu->acc++;
+        break;
+    case 0x05: /* MN_INC */
+        addr = cpu_fetch8(cpu);
+        value = cpu_read_direct(cpu, addr);
+        cpu_write_direct(cpu, addr, (uint8_t)(value + 1u));
+        break;
+    case 0x06: /* MN_INC */ case 0x07: /* MN_INC */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        idx = (uint8_t)(bank + (opcode & 0x01u));
+        addr = cpu->iram[idx];
+        cpu->iram[addr]++;
+        break;
+    case 0x08: /* MN_INC */ case 0x09: /* MN_INC */ case 0x0A: /* MN_INC */ case 0x0B: /* MN_INC */
+    case 0x0C: /* MN_INC */ case 0x0D: /* MN_INC */ case 0x0E: /* MN_INC */ case 0x0F: /* MN_INC */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        idx = (uint8_t)(bank + (opcode & 0x07u));
+        cpu->iram[idx]++;
+        break;
+
+    case 0x10: /* MN_JBC */
+        bit = cpu_fetch8(cpu);
+        rel = (int8_t)cpu_fetch8(cpu);
+        if (cpu_read_bit(cpu, bit) != 0) {
+            cpu_write_bit(cpu, bit, false);
+            cpu->pc = (uint16_t)(cpu->pc + rel);
+        }
+        break;
+
+    case 0x11: /* MN_ACALL */ case 0x31: /* MN_ACALL */ case 0x51: /* MN_ACALL */ case 0x71: /* MN_ACALL */
+    case 0x91: /* MN_ACALL */ case 0xB1: /* MN_ACALL */ case 0xD1: /* MN_ACALL */ case 0xF1: /* MN_ACALL */
+        imm = cpu_fetch8(cpu);
+        addr16 = (uint16_t)(((opcode & 0xE0u) << 3) | imm);
+        ret = cpu->pc;
+        cpu->sp++;
+        cpu->iram[cpu->sp] = (uint8_t)(ret & 0xFFu);
+        cpu->sp++;
+        cpu->iram[cpu->sp] = (uint8_t)(ret >> 8);
+        cpu->pc = (uint16_t)((cpu->pc & 0xF800u) | (addr16 & 0x07FFu));
+        break;
+
+    case 0x12: /* MN_LCALL */
+        addr16 = cpu_fetch16(cpu);
+        ret = cpu->pc;
+        cpu->sp++;
+        cpu->iram[cpu->sp] = (uint8_t)(ret & 0xFFu);
+        cpu->sp++;
+        cpu->iram[cpu->sp] = (uint8_t)(ret >> 8);
+        cpu->pc = addr16;
+        break;
+
+    case 0x13: /* MN_RRC */
+        value = cpu->acc;
+        cpu->acc = (uint8_t)((value >> 1) | ((cpu->psw & PSW_CY) ? 0x80u : 0u));
+        if (value & 0x01u) {
+            cpu->psw |= PSW_CY;
+        } else {
+            cpu->psw &= (uint8_t)~PSW_CY;
+        }
+        break;
+
+    case 0x14: /* MN_DEC */
+        cpu->acc--;
+        break;
+    case 0x15: /* MN_DEC */
+        addr = cpu_fetch8(cpu);
+        value = cpu_read_direct(cpu, addr);
+        cpu_write_direct(cpu, addr, (uint8_t)(value - 1u));
+        break;
+    case 0x16: /* MN_DEC */ case 0x17: /* MN_DEC */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        idx = (uint8_t)(bank + (opcode & 0x01u));
+        addr = cpu->iram[idx];
+        cpu->iram[addr]--;
+        break;
+    case 0x18: /* MN_DEC */ case 0x19: /* MN_DEC */ case 0x1A: /* MN_DEC */ case 0x1B: /* MN_DEC */
+    case 0x1C: /* MN_DEC */ case 0x1D: /* MN_DEC */ case 0x1E: /* MN_DEC */ case 0x1F: /* MN_DEC */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        idx = (uint8_t)(bank + (opcode & 0x07u));
+        cpu->iram[idx]--;
+        break;
+
+    case 0x20: /* MN_JB */
+        bit = cpu_fetch8(cpu);
+        rel = (int8_t)cpu_fetch8(cpu);
+        if (cpu_read_bit(cpu, bit) != 0) {
+            cpu->pc = (uint16_t)(cpu->pc + rel);
+        }
+        break;
+
+    case 0x22: /* MN_RET */
+        value = cpu->iram[cpu->sp--];
+        rhs = cpu->iram[cpu->sp--];
+        cpu->pc = (uint16_t)(((uint16_t)value << 8) | rhs);
+        break;
+
+    case 0x23: /* MN_RL */
+        cpu->acc = (uint8_t)((cpu->acc << 1) | (cpu->acc >> 7));
+        break;
+
+    case 0x24: /* MN_ADD */
+        imm = cpu_fetch8(cpu);
+        value = cpu->acc;
+        addr16 = (uint16_t)value + (uint16_t)imm;
+        cpu->acc = (uint8_t)addr16;
+        psw = cpu->psw;
+        if (addr16 > 0xFFu) psw |= PSW_CY; else psw &= (uint8_t)~PSW_CY;
+        if (((value & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu) psw |= PSW_AC; else psw &= (uint8_t)~PSW_AC;
+        if (((~(value ^ imm)) & (value ^ cpu->acc) & 0x80u) != 0u) psw |= PSW_OV; else psw &= (uint8_t)~PSW_OV;
+        cpu->psw = psw;
+        break;
+    case 0x25: /* MN_ADD */
+        addr = cpu_fetch8(cpu);
+        imm = cpu_read_direct(cpu, addr);
+        value = cpu->acc;
+        addr16 = (uint16_t)value + (uint16_t)imm;
+        cpu->acc = (uint8_t)addr16;
+        psw = cpu->psw;
+        if (addr16 > 0xFFu) psw |= PSW_CY; else psw &= (uint8_t)~PSW_CY;
+        if (((value & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu) psw |= PSW_AC; else psw &= (uint8_t)~PSW_AC;
+        if (((~(value ^ imm)) & (value ^ cpu->acc) & 0x80u) != 0u) psw |= PSW_OV; else psw &= (uint8_t)~PSW_OV;
+        cpu->psw = psw;
+        break;
+    case 0x26: /* MN_ADD */ case 0x27: /* MN_ADD */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        imm = cpu->iram[addr];
+        value = cpu->acc;
+        addr16 = (uint16_t)value + (uint16_t)imm;
+        cpu->acc = (uint8_t)addr16;
+        psw = cpu->psw;
+        if (addr16 > 0xFFu) psw |= PSW_CY; else psw &= (uint8_t)~PSW_CY;
+        if (((value & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu) psw |= PSW_AC; else psw &= (uint8_t)~PSW_AC;
+        if (((~(value ^ imm)) & (value ^ cpu->acc) & 0x80u) != 0u) psw |= PSW_OV; else psw &= (uint8_t)~PSW_OV;
+        cpu->psw = psw;
+        break;
+    case 0x28: /* MN_ADD */ case 0x29: /* MN_ADD */ case 0x2A: /* MN_ADD */ case 0x2B: /* MN_ADD */
+    case 0x2C: /* MN_ADD */ case 0x2D: /* MN_ADD */ case 0x2E: /* MN_ADD */ case 0x2F: /* MN_ADD */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        imm = cpu->iram[(uint8_t)(bank + (opcode & 0x07u))];
+        value = cpu->acc;
+        addr16 = (uint16_t)value + (uint16_t)imm;
+        cpu->acc = (uint8_t)addr16;
+        psw = cpu->psw;
+        if (addr16 > 0xFFu) psw |= PSW_CY; else psw &= (uint8_t)~PSW_CY;
+        if (((value & 0x0Fu) + (imm & 0x0Fu)) > 0x0Fu) psw |= PSW_AC; else psw &= (uint8_t)~PSW_AC;
+        if (((~(value ^ imm)) & (value ^ cpu->acc) & 0x80u) != 0u) psw |= PSW_OV; else psw &= (uint8_t)~PSW_OV;
+        cpu->psw = psw;
+        break;
+
+    case 0x30: /* MN_JNB */
+        bit = cpu_fetch8(cpu);
+        rel = (int8_t)cpu_fetch8(cpu);
+        if (cpu_read_bit(cpu, bit) == 0) {
+            cpu->pc = (uint16_t)(cpu->pc + rel);
+        }
+        break;
+
+    case 0x32: /* MN_RETI */
+        value = cpu->iram[cpu->sp--];
+        rhs = cpu->iram[cpu->sp--];
+        cpu->pc = (uint16_t)(((uint16_t)value << 8) | rhs);
+        cpu_on_reti(cpu);
+        break;
+
+    case 0x33: /* MN_RLC */
+        value = cpu->acc;
+        cpu->acc = (uint8_t)((value << 1) | ((cpu->psw & PSW_CY) ? 1u : 0u));
+        if (value & 0x80u) {
+            cpu->psw |= PSW_CY;
+        } else {
+            cpu->psw &= (uint8_t)~PSW_CY;
+        }
+        break;
+
+    case 0x34: /* MN_ADDC */
+        imm = cpu_fetch8(cpu);
+        value = cpu->acc;
+        rhs = (uint8_t)((cpu->psw & PSW_CY) ? 1u : 0u);
+        addr16 = (uint16_t)value + (uint16_t)imm + (uint16_t)rhs;
+        cpu->acc = (uint8_t)addr16;
+        psw = cpu->psw;
+        if (addr16 > 0xFFu) psw |= PSW_CY; else psw &= (uint8_t)~PSW_CY;
+        if (((value & 0x0Fu) + (imm & 0x0Fu) + rhs) > 0x0Fu) psw |= PSW_AC; else psw &= (uint8_t)~PSW_AC;
+        if (((~(value ^ (uint8_t)(imm + rhs))) & (value ^ cpu->acc) & 0x80u) != 0u) psw |= PSW_OV; else psw &= (uint8_t)~PSW_OV;
+        cpu->psw = psw;
+        break;
+    case 0x35: /* MN_ADDC */
+        addr = cpu_fetch8(cpu);
+        imm = cpu_read_direct(cpu, addr);
+        value = cpu->acc;
+        rhs = (uint8_t)((cpu->psw & PSW_CY) ? 1u : 0u);
+        addr16 = (uint16_t)value + (uint16_t)imm + (uint16_t)rhs;
+        cpu->acc = (uint8_t)addr16;
+        psw = cpu->psw;
+        if (addr16 > 0xFFu) psw |= PSW_CY; else psw &= (uint8_t)~PSW_CY;
+        if (((value & 0x0Fu) + (imm & 0x0Fu) + rhs) > 0x0Fu) psw |= PSW_AC; else psw &= (uint8_t)~PSW_AC;
+        if (((~(value ^ (uint8_t)(imm + rhs))) & (value ^ cpu->acc) & 0x80u) != 0u) psw |= PSW_OV; else psw &= (uint8_t)~PSW_OV;
+        cpu->psw = psw;
+        break;
+    case 0x36: /* MN_ADDC */ case 0x37: /* MN_ADDC */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        imm = cpu->iram[addr];
+        value = cpu->acc;
+        rhs = (uint8_t)((cpu->psw & PSW_CY) ? 1u : 0u);
+        addr16 = (uint16_t)value + (uint16_t)imm + (uint16_t)rhs;
+        cpu->acc = (uint8_t)addr16;
+        psw = cpu->psw;
+        if (addr16 > 0xFFu) psw |= PSW_CY; else psw &= (uint8_t)~PSW_CY;
+        if (((value & 0x0Fu) + (imm & 0x0Fu) + rhs) > 0x0Fu) psw |= PSW_AC; else psw &= (uint8_t)~PSW_AC;
+        if (((~(value ^ (uint8_t)(imm + rhs))) & (value ^ cpu->acc) & 0x80u) != 0u) psw |= PSW_OV; else psw &= (uint8_t)~PSW_OV;
+        cpu->psw = psw;
+        break;
+    case 0x38: /* MN_ADDC */ case 0x39: /* MN_ADDC */ case 0x3A: /* MN_ADDC */ case 0x3B: /* MN_ADDC */
+    case 0x3C: /* MN_ADDC */ case 0x3D: /* MN_ADDC */ case 0x3E: /* MN_ADDC */ case 0x3F: /* MN_ADDC */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        imm = cpu->iram[(uint8_t)(bank + (opcode & 0x07u))];
+        value = cpu->acc;
+        rhs = (uint8_t)((cpu->psw & PSW_CY) ? 1u : 0u);
+        addr16 = (uint16_t)value + (uint16_t)imm + (uint16_t)rhs;
+        cpu->acc = (uint8_t)addr16;
+        psw = cpu->psw;
+        if (addr16 > 0xFFu) psw |= PSW_CY; else psw &= (uint8_t)~PSW_CY;
+        if (((value & 0x0Fu) + (imm & 0x0Fu) + rhs) > 0x0Fu) psw |= PSW_AC; else psw &= (uint8_t)~PSW_AC;
+        if (((~(value ^ (uint8_t)(imm + rhs))) & (value ^ cpu->acc) & 0x80u) != 0u) psw |= PSW_OV; else psw &= (uint8_t)~PSW_OV;
+        cpu->psw = psw;
+        break;
+
+    case 0x40: /* MN_JC */
+        rel = (int8_t)cpu_fetch8(cpu);
+        if (cpu->psw & PSW_CY) {
+            cpu->pc = (uint16_t)(cpu->pc + rel);
+        }
+        break;
+
+    case 0x42: /* MN_ORL */
+        addr = cpu_fetch8(cpu);
+        value = cpu_read_direct(cpu, addr);
+        cpu_write_direct(cpu, addr, (uint8_t)(value | cpu->acc));
+        break;
+    case 0x43: /* MN_ORL */
+        addr = cpu_fetch8(cpu);
+        imm = cpu_fetch8(cpu);
+        value = cpu_read_direct(cpu, addr);
+        cpu_write_direct(cpu, addr, (uint8_t)(value | imm));
+        break;
+    case 0x44: /* MN_ORL */
+        cpu->acc = (uint8_t)(cpu->acc | cpu_fetch8(cpu));
+        break;
+    case 0x45: /* MN_ORL */
+        addr = cpu_fetch8(cpu);
+        cpu->acc = (uint8_t)(cpu->acc | cpu_read_direct(cpu, addr));
+        break;
+    case 0x46: /* MN_ORL */ case 0x47: /* MN_ORL */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        cpu->acc = (uint8_t)(cpu->acc | cpu->iram[addr]);
+        break;
+    case 0x48: /* MN_ORL */ case 0x49: /* MN_ORL */ case 0x4A: /* MN_ORL */ case 0x4B: /* MN_ORL */
+    case 0x4C: /* MN_ORL */ case 0x4D: /* MN_ORL */ case 0x4E: /* MN_ORL */ case 0x4F: /* MN_ORL */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        cpu->acc = (uint8_t)(cpu->acc | cpu->iram[(uint8_t)(bank + (opcode & 0x07u))]);
+        break;
+
+    case 0x50: /* MN_JNC */
+        rel = (int8_t)cpu_fetch8(cpu);
+        if ((cpu->psw & PSW_CY) == 0) {
+            cpu->pc = (uint16_t)(cpu->pc + rel);
+        }
+        break;
+
+    case 0x52: /* MN_ANL */
+        addr = cpu_fetch8(cpu);
+        value = cpu_read_direct(cpu, addr);
+        cpu_write_direct(cpu, addr, (uint8_t)(value & cpu->acc));
+        break;
+    case 0x53: /* MN_ANL */
+        addr = cpu_fetch8(cpu);
+        imm = cpu_fetch8(cpu);
+        value = cpu_read_direct(cpu, addr);
+        cpu_write_direct(cpu, addr, (uint8_t)(value & imm));
+        break;
+    case 0x54: /* MN_ANL */
+        cpu->acc = (uint8_t)(cpu->acc & cpu_fetch8(cpu));
+        break;
+    case 0x55: /* MN_ANL */
+        addr = cpu_fetch8(cpu);
+        cpu->acc = (uint8_t)(cpu->acc & cpu_read_direct(cpu, addr));
+        break;
+    case 0x56: /* MN_ANL */ case 0x57: /* MN_ANL */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        cpu->acc = (uint8_t)(cpu->acc & cpu->iram[addr]);
+        break;
+    case 0x58: /* MN_ANL */ case 0x59: /* MN_ANL */ case 0x5A: /* MN_ANL */ case 0x5B: /* MN_ANL */
+    case 0x5C: /* MN_ANL */ case 0x5D: /* MN_ANL */ case 0x5E: /* MN_ANL */ case 0x5F: /* MN_ANL */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        cpu->acc = (uint8_t)(cpu->acc & cpu->iram[(uint8_t)(bank + (opcode & 0x07u))]);
+        break;
+
+    case 0x60: /* MN_JZ */
+        rel = (int8_t)cpu_fetch8(cpu);
         if (cpu->acc == 0) {
             cpu->pc = (uint16_t)(cpu->pc + rel);
         }
-        goto finalize_step; }
-    case 0x70: { /* JNZ rel */
-        int8_t rel = (int8_t)cpu_fetch8(cpu);
+        break;
+
+    case 0x62: /* MN_XRL */
+        addr = cpu_fetch8(cpu);
+        value = cpu_read_direct(cpu, addr);
+        cpu_write_direct(cpu, addr, (uint8_t)(value ^ cpu->acc));
+        break;
+    case 0x63: /* MN_XRL */
+        addr = cpu_fetch8(cpu);
+        imm = cpu_fetch8(cpu);
+        value = cpu_read_direct(cpu, addr);
+        cpu_write_direct(cpu, addr, (uint8_t)(value ^ imm));
+        break;
+    case 0x64: /* MN_XRL */
+        cpu->acc = (uint8_t)(cpu->acc ^ cpu_fetch8(cpu));
+        break;
+    case 0x65: /* MN_XRL */
+        addr = cpu_fetch8(cpu);
+        cpu->acc = (uint8_t)(cpu->acc ^ cpu_read_direct(cpu, addr));
+        break;
+    case 0x66: /* MN_XRL */ case 0x67: /* MN_XRL */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        cpu->acc = (uint8_t)(cpu->acc ^ cpu->iram[addr]);
+        break;
+    case 0x68: /* MN_XRL */ case 0x69: /* MN_XRL */ case 0x6A: /* MN_XRL */ case 0x6B: /* MN_XRL */
+    case 0x6C: /* MN_XRL */ case 0x6D: /* MN_XRL */ case 0x6E: /* MN_XRL */ case 0x6F: /* MN_XRL */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        cpu->acc = (uint8_t)(cpu->acc ^ cpu->iram[(uint8_t)(bank + (opcode & 0x07u))]);
+        break;
+
+    case 0x70: /* MN_JNZ */
+        rel = (int8_t)cpu_fetch8(cpu);
         if (cpu->acc != 0) {
             cpu->pc = (uint16_t)(cpu->pc + rel);
         }
-        goto finalize_step; }
-    case 0x74: /* MOV A,#imm */
+        break;
+
+    case 0x72: /* MN_ORL */
+        bit = cpu_fetch8(cpu);
+        if (cpu_read_bit(cpu, bit) != 0) {
+            cpu->psw |= PSW_CY;
+        }
+        break;
+    case 0x73: /* MN_JMPA_DPTR */
+        cpu->pc = (uint16_t)(cpu->dptr + cpu->acc);
+        break;
+    case 0x74: /* MN_MOV */
         cpu->acc = cpu_fetch8(cpu);
-        goto finalize_step;
-    case 0x75: { /* MOV direct,#imm */
-        uint8_t direct = cpu_fetch8(cpu);
-        cpu_write_direct(cpu, direct, cpu_fetch8(cpu));
-        goto finalize_step; }
-    case 0x80: { /* SJMP rel */
-        int8_t rel = (int8_t)cpu_fetch8(cpu);
+        break;
+    case 0x75: /* MN_MOV */
+        addr = cpu_fetch8(cpu);
+        imm = cpu_fetch8(cpu);
+        cpu_write_direct(cpu, addr, imm);
+        break;
+    case 0x76: /* MN_MOV */ case 0x77: /* MN_MOV */
+        imm = cpu_fetch8(cpu);
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        cpu->iram[addr] = imm;
+        break;
+    case 0x78: /* MN_MOV */ case 0x79: /* MN_MOV */ case 0x7A: /* MN_MOV */ case 0x7B: /* MN_MOV */
+    case 0x7C: /* MN_MOV */ case 0x7D: /* MN_MOV */ case 0x7E: /* MN_MOV */ case 0x7F: /* MN_MOV */
+        imm = cpu_fetch8(cpu);
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        cpu->iram[(uint8_t)(bank + (opcode & 0x07u))] = imm;
+        break;
+
+    case 0x80: /* MN_SJMP */
+        rel = (int8_t)cpu_fetch8(cpu);
         cpu->pc = (uint16_t)(cpu->pc + rel);
-        goto finalize_step; }
-    case 0xE4: /* CLR A */
+        break;
+
+    case 0x82: /* MN_ANL */
+        bit = cpu_fetch8(cpu);
+        if (cpu_read_bit(cpu, bit) == 0) {
+            cpu->psw &= (uint8_t)~PSW_CY;
+        }
+        break;
+    case 0x83: /* MN_MOVC_A_PC */
+        cpu->acc = cpu_code_read(cpu, (uint16_t)(cpu->pc + cpu->acc));
+        break;
+    case 0x84: /* MN_DIV */
+        if (cpu->b == 0) {
+            cpu->psw |= PSW_OV;
+            cpu->psw &= (uint8_t)~PSW_CY;
+        } else {
+            value = cpu->acc;
+            cpu->acc = (uint8_t)(value / cpu->b);
+            cpu->b = (uint8_t)(value % cpu->b);
+            cpu->psw &= (uint8_t)~PSW_OV;
+            cpu->psw &= (uint8_t)~PSW_CY;
+        }
+        break;
+    case 0x85: /* MN_MOV_DIRECT_DIRECT */
+        rhs = cpu_fetch8(cpu);
+        addr = cpu_fetch8(cpu);
+        cpu_write_direct(cpu, addr, cpu_read_direct(cpu, rhs));
+        break;
+    case 0x86: /* MN_MOV */ case 0x87: /* MN_MOV */
+        addr = cpu_fetch8(cpu);
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        rhs = cpu->iram[cpu->iram[(uint8_t)(bank + (opcode & 0x01u))]];
+        cpu_write_direct(cpu, addr, rhs);
+        break;
+    case 0x88: /* MN_MOV */ case 0x89: /* MN_MOV */ case 0x8A: /* MN_MOV */ case 0x8B: /* MN_MOV */
+    case 0x8C: /* MN_MOV */ case 0x8D: /* MN_MOV */ case 0x8E: /* MN_MOV */ case 0x8F: /* MN_MOV */
+        addr = cpu_fetch8(cpu);
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        cpu_write_direct(cpu, addr, cpu->iram[(uint8_t)(bank + (opcode & 0x07u))]);
+        break;
+
+    case 0x90: /* MN_MOV_DPTR_IMM */
+        cpu->dptr = cpu_fetch16(cpu);
+        break;
+
+    case 0x92: /* MN_MOV */
+        bit = cpu_fetch8(cpu);
+        cpu_write_bit(cpu, bit, (cpu->psw & PSW_CY) != 0);
+        break;
+    case 0x93: /* MN_MOVC_A_DPTR */
+        cpu->acc = cpu_code_read(cpu, (uint16_t)(cpu->dptr + cpu->acc));
+        break;
+    case 0x94: /* MN_SUBB */
+        imm = cpu_fetch8(cpu);
+        value = cpu->acc;
+        rhs = (uint8_t)(imm + ((cpu->psw & PSW_CY) ? 1u : 0u));
+        cpu->acc = (uint8_t)(value - rhs);
+        psw = cpu->psw;
+        if (value < rhs) psw |= PSW_CY; else psw &= (uint8_t)~PSW_CY;
+        if ((value & 0x0Fu) < ((imm & 0x0Fu) + ((cpu->psw & PSW_CY) ? 1u : 0u))) psw |= PSW_AC; else psw &= (uint8_t)~PSW_AC;
+        if (((value ^ imm) & (value ^ cpu->acc) & 0x80u) != 0u) psw |= PSW_OV; else psw &= (uint8_t)~PSW_OV;
+        cpu->psw = psw;
+        break;
+    case 0x95: /* MN_SUBB */
+        addr = cpu_fetch8(cpu);
+        imm = cpu_read_direct(cpu, addr);
+        value = cpu->acc;
+        rhs = (uint8_t)(imm + ((cpu->psw & PSW_CY) ? 1u : 0u));
+        cpu->acc = (uint8_t)(value - rhs);
+        psw = cpu->psw;
+        if (value < rhs) psw |= PSW_CY; else psw &= (uint8_t)~PSW_CY;
+        if ((value & 0x0Fu) < ((imm & 0x0Fu) + ((cpu->psw & PSW_CY) ? 1u : 0u))) psw |= PSW_AC; else psw &= (uint8_t)~PSW_AC;
+        if (((value ^ imm) & (value ^ cpu->acc) & 0x80u) != 0u) psw |= PSW_OV; else psw &= (uint8_t)~PSW_OV;
+        cpu->psw = psw;
+        break;
+    case 0x96: /* MN_SUBB */ case 0x97: /* MN_SUBB */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        imm = cpu->iram[addr];
+        value = cpu->acc;
+        rhs = (uint8_t)(imm + ((cpu->psw & PSW_CY) ? 1u : 0u));
+        cpu->acc = (uint8_t)(value - rhs);
+        psw = cpu->psw;
+        if (value < rhs) psw |= PSW_CY; else psw &= (uint8_t)~PSW_CY;
+        if ((value & 0x0Fu) < ((imm & 0x0Fu) + ((cpu->psw & PSW_CY) ? 1u : 0u))) psw |= PSW_AC; else psw &= (uint8_t)~PSW_AC;
+        if (((value ^ imm) & (value ^ cpu->acc) & 0x80u) != 0u) psw |= PSW_OV; else psw &= (uint8_t)~PSW_OV;
+        cpu->psw = psw;
+        break;
+    case 0x98: /* MN_SUBB */ case 0x99: /* MN_SUBB */ case 0x9A: /* MN_SUBB */ case 0x9B: /* MN_SUBB */
+    case 0x9C: /* MN_SUBB */ case 0x9D: /* MN_SUBB */ case 0x9E: /* MN_SUBB */ case 0x9F: /* MN_SUBB */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        imm = cpu->iram[(uint8_t)(bank + (opcode & 0x07u))];
+        value = cpu->acc;
+        rhs = (uint8_t)(imm + ((cpu->psw & PSW_CY) ? 1u : 0u));
+        cpu->acc = (uint8_t)(value - rhs);
+        psw = cpu->psw;
+        if (value < rhs) psw |= PSW_CY; else psw &= (uint8_t)~PSW_CY;
+        if ((value & 0x0Fu) < ((imm & 0x0Fu) + ((cpu->psw & PSW_CY) ? 1u : 0u))) psw |= PSW_AC; else psw &= (uint8_t)~PSW_AC;
+        if (((value ^ imm) & (value ^ cpu->acc) & 0x80u) != 0u) psw |= PSW_OV; else psw &= (uint8_t)~PSW_OV;
+        cpu->psw = psw;
+        break;
+
+    case 0xA0: /* MN_ORL */
+        bit = cpu_fetch8(cpu);
+        if (cpu_read_bit(cpu, bit) == 0) cpu->psw |= PSW_CY;
+        break;
+    case 0xA2: /* MN_MOV */
+        bit = cpu_fetch8(cpu);
+        if (cpu_read_bit(cpu, bit)) cpu->psw |= PSW_CY; else cpu->psw &= (uint8_t)~PSW_CY;
+        break;
+    case 0xA3: /* MN_INC */
+        cpu->dptr++;
+        break;
+    case 0xA4: /* MN_MUL */
+        addr16 = (uint16_t)cpu->acc * (uint16_t)cpu->b;
+        cpu->acc = (uint8_t)(addr16 & 0xFFu);
+        cpu->b = (uint8_t)(addr16 >> 8);
+        cpu->psw &= (uint8_t)~PSW_CY;
+        if (addr16 > 0xFFu) cpu->psw |= PSW_OV; else cpu->psw &= (uint8_t)~PSW_OV;
+        break;
+    case 0xA5: /* MN_INVALID */
+        cpu->halted = true;
+        cpu->halt_reason = "invalid opcode";
+        break;
+    case 0xA6: /* MN_MOV */ case 0xA7: /* MN_MOV */
+        addr = cpu_fetch8(cpu);
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        idx = (uint8_t)(bank + (opcode & 0x01u));
+        cpu->iram[cpu->iram[idx]] = cpu_read_direct(cpu, addr);
+        break;
+    case 0xA8: /* MN_MOV */ case 0xA9: /* MN_MOV */ case 0xAA: /* MN_MOV */ case 0xAB: /* MN_MOV */
+    case 0xAC: /* MN_MOV */ case 0xAD: /* MN_MOV */ case 0xAE: /* MN_MOV */ case 0xAF: /* MN_MOV */
+        addr = cpu_fetch8(cpu);
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        cpu->iram[(uint8_t)(bank + (opcode & 0x07u))] = cpu_read_direct(cpu, addr);
+        break;
+
+    case 0xB0: /* MN_ANL */
+        bit = cpu_fetch8(cpu);
+        if (cpu_read_bit(cpu, bit) != 0) cpu->psw &= (uint8_t)~PSW_CY;
+        break;
+    case 0xB2: /* MN_CPL */
+        bit = cpu_fetch8(cpu);
+        cpu_write_bit(cpu, bit, cpu_read_bit(cpu, bit) == 0);
+        break;
+    case 0xB3: /* MN_CPL */
+        cpu->psw ^= PSW_CY;
+        break;
+    case 0xB4: /* MN_CJNE_A_IMM */
+        imm = cpu_fetch8(cpu);
+        rel = (int8_t)cpu_fetch8(cpu);
+        value = cpu->acc;
+        if (value < imm) cpu->psw |= PSW_CY; else cpu->psw &= (uint8_t)~PSW_CY;
+        if (value != imm) cpu->pc = (uint16_t)(cpu->pc + rel);
+        break;
+    case 0xB5: /* MN_CJNE_A_DIRECT */
+        addr = cpu_fetch8(cpu);
+        rel = (int8_t)cpu_fetch8(cpu);
+        imm = cpu_read_direct(cpu, addr);
+        value = cpu->acc;
+        if (value < imm) cpu->psw |= PSW_CY; else cpu->psw &= (uint8_t)~PSW_CY;
+        if (value != imm) cpu->pc = (uint16_t)(cpu->pc + rel);
+        break;
+    case 0xB6: /* MN_CJNE_AT_RI_IMM */ case 0xB7: /* MN_CJNE_AT_RI_IMM */
+        imm = cpu_fetch8(cpu);
+        rel = (int8_t)cpu_fetch8(cpu);
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        value = cpu->iram[cpu->iram[(uint8_t)(bank + (opcode & 0x01u))]];
+        if (value < imm) cpu->psw |= PSW_CY; else cpu->psw &= (uint8_t)~PSW_CY;
+        if (value != imm) cpu->pc = (uint16_t)(cpu->pc + rel);
+        break;
+    case 0xB8: /* MN_CJNE_RN_IMM */ case 0xB9: /* MN_CJNE_RN_IMM */ case 0xBA: /* MN_CJNE_RN_IMM */ case 0xBB: /* MN_CJNE_RN_IMM */
+    case 0xBC: /* MN_CJNE_RN_IMM */ case 0xBD: /* MN_CJNE_RN_IMM */ case 0xBE: /* MN_CJNE_RN_IMM */ case 0xBF: /* MN_CJNE_RN_IMM */
+        imm = cpu_fetch8(cpu);
+        rel = (int8_t)cpu_fetch8(cpu);
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        value = cpu->iram[(uint8_t)(bank + (opcode & 0x07u))];
+        if (value < imm) cpu->psw |= PSW_CY; else cpu->psw &= (uint8_t)~PSW_CY;
+        if (value != imm) cpu->pc = (uint16_t)(cpu->pc + rel);
+        break;
+
+    case 0xC0: /* MN_PUSH */
+        addr = cpu_fetch8(cpu);
+        cpu->sp++;
+        cpu->iram[cpu->sp] = cpu_read_direct(cpu, addr);
+        break;
+    case 0xC2: /* MN_CLR */
+        bit = cpu_fetch8(cpu);
+        cpu_write_bit(cpu, bit, false);
+        break;
+    case 0xC3: /* MN_CLR */
+        cpu->psw &= (uint8_t)~PSW_CY;
+        break;
+    case 0xC4: /* MN_SWAP */
+        cpu->acc = (uint8_t)((cpu->acc << 4) | (cpu->acc >> 4));
+        break;
+    case 0xC5: /* MN_XCH */
+        addr = cpu_fetch8(cpu);
+        value = cpu->acc;
+        cpu->acc = cpu_read_direct(cpu, addr);
+        cpu_write_direct(cpu, addr, value);
+        break;
+    case 0xC6: /* MN_XCH */ case 0xC7: /* MN_XCH */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        value = cpu->acc;
+        cpu->acc = cpu->iram[addr];
+        cpu->iram[addr] = value;
+        break;
+    case 0xC8: /* MN_XCH */ case 0xC9: /* MN_XCH */ case 0xCA: /* MN_XCH */ case 0xCB: /* MN_XCH */
+    case 0xCC: /* MN_XCH */ case 0xCD: /* MN_XCH */ case 0xCE: /* MN_XCH */ case 0xCF: /* MN_XCH */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        idx = (uint8_t)(bank + (opcode & 0x07u));
+        value = cpu->acc;
+        cpu->acc = cpu->iram[idx];
+        cpu->iram[idx] = value;
+        break;
+
+    case 0xD0: /* MN_POP */
+        addr = cpu_fetch8(cpu);
+        cpu_write_direct(cpu, addr, cpu->iram[cpu->sp]);
+        cpu->sp--;
+        break;
+    case 0xD2: /* MN_SETB */
+        bit = cpu_fetch8(cpu);
+        cpu_write_bit(cpu, bit, true);
+        break;
+    case 0xD3: /* MN_SETB */
+        cpu->psw |= PSW_CY;
+        break;
+    case 0xD4: /* MN_DA */
+        value = cpu->acc;
+        rhs = 0;
+        if (((value & 0x0Fu) > 9u) || (cpu->psw & PSW_AC)) {
+            rhs |= 0x06u;
+        }
+        if ((value > 0x99u) || (cpu->psw & PSW_CY)) {
+            rhs |= 0x60u;
+            cpu->psw |= PSW_CY;
+        }
+        cpu->acc = (uint8_t)(value + rhs);
+        break;
+    case 0xD5: /* MN_DJNZ */
+        addr = cpu_fetch8(cpu);
+        rel = (int8_t)cpu_fetch8(cpu);
+        value = (uint8_t)(cpu_read_direct(cpu, addr) - 1u);
+        cpu_write_direct(cpu, addr, value);
+        if (value != 0) cpu->pc = (uint16_t)(cpu->pc + rel);
+        break;
+    case 0xD6: /* MN_XCHD */ case 0xD7: /* MN_XCHD */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        value = cpu->iram[addr];
+        rhs = (uint8_t)(cpu->acc & 0x0Fu);
+        cpu->acc = (uint8_t)((cpu->acc & 0xF0u) | (value & 0x0Fu));
+        cpu->iram[addr] = (uint8_t)((value & 0xF0u) | rhs);
+        break;
+    case 0xD8: /* MN_DJNZ */ case 0xD9: /* MN_DJNZ */ case 0xDA: /* MN_DJNZ */ case 0xDB: /* MN_DJNZ */
+    case 0xDC: /* MN_DJNZ */ case 0xDD: /* MN_DJNZ */ case 0xDE: /* MN_DJNZ */ case 0xDF: /* MN_DJNZ */
+        rel = (int8_t)cpu_fetch8(cpu);
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        idx = (uint8_t)(bank + (opcode & 0x07u));
+        cpu->iram[idx]--;
+        if (cpu->iram[idx] != 0) cpu->pc = (uint16_t)(cpu->pc + rel);
+        break;
+
+    case 0xE0: /* MN_MOVX_A_DPTR */
+        cpu->acc = cpu_xdata_read(cpu, cpu->dptr);
+        break;
+    case 0xE2: /* MN_MOVX_A_AT_RI */ case 0xE3: /* MN_MOVX_A_AT_RI */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        cpu->acc = cpu_xdata_read(cpu, addr);
+        break;
+    case 0xE4: /* MN_CLR */
         cpu->acc = 0;
-        goto finalize_step;
-    case 0xE5: { /* MOV A,direct */
-        uint8_t direct = cpu_fetch8(cpu);
-        cpu->acc = cpu_read_direct(cpu, direct);
-        goto finalize_step; }
-    case 0xF4: /* CPL A */
+        break;
+    case 0xE5: /* MN_MOV */
+        addr = cpu_fetch8(cpu);
+        cpu->acc = cpu_read_direct(cpu, addr);
+        break;
+    case 0xE6: /* MN_MOV */ case 0xE7: /* MN_MOV */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        cpu->acc = cpu->iram[addr];
+        break;
+    case 0xE8: /* MN_MOV */ case 0xE9: /* MN_MOV */ case 0xEA: /* MN_MOV */ case 0xEB: /* MN_MOV */
+    case 0xEC: /* MN_MOV */ case 0xED: /* MN_MOV */ case 0xEE: /* MN_MOV */ case 0xEF: /* MN_MOV */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        cpu->acc = cpu->iram[(uint8_t)(bank + (opcode & 0x07u))];
+        break;
+
+    case 0xF0: /* MN_MOVX_DPTR_A */
+        cpu_xdata_write(cpu, cpu->dptr, cpu->acc);
+        break;
+    case 0xF2: /* MN_MOVX_AT_RI_A */ case 0xF3: /* MN_MOVX_AT_RI_A */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        cpu_xdata_write(cpu, addr, cpu->acc);
+        break;
+    case 0xF4: /* MN_CPL */
         cpu->acc = (uint8_t)~cpu->acc;
-        goto finalize_step;
-    case 0xF5: { /* MOV direct,A */
-        uint8_t direct = cpu_fetch8(cpu);
-        cpu_write_direct(cpu, direct, cpu->acc);
-        goto finalize_step; }
+        break;
+    case 0xF5: /* MN_MOV */
+        addr = cpu_fetch8(cpu);
+        cpu_write_direct(cpu, addr, cpu->acc);
+        break;
+    case 0xF6: /* MN_MOV */ case 0xF7: /* MN_MOV */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        addr = cpu->iram[(uint8_t)(bank + (opcode & 0x01u))];
+        cpu->iram[addr] = cpu->acc;
+        break;
+    case 0xF8: /* MN_MOV */ case 0xF9: /* MN_MOV */ case 0xFA: /* MN_MOV */ case 0xFB: /* MN_MOV */
+    case 0xFC: /* MN_MOV */ case 0xFD: /* MN_MOV */ case 0xFE: /* MN_MOV */ case 0xFF: /* MN_MOV */
+        bank = (uint8_t)(((cpu->psw >> 3) & 0x03u) << 3);
+        cpu->iram[(uint8_t)(bank + (opcode & 0x07u))] = cpu->acc;
+        break;
+
     default:
+        cpu->halted = true;
+        cpu->halt_reason = "invalid opcode";
         break;
     }
 
-    if ((opcode & 0xF8u) == 0x08u) { /* INC Rn */
-        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
-        cpu->iram[idx] = (uint8_t)(cpu->iram[idx] + 1u);
-        goto finalize_step;
-    }
-    if ((opcode & 0xF8u) == 0x18u) { /* DEC Rn */
-        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
-        cpu->iram[idx] = (uint8_t)(cpu->iram[idx] - 1u);
-        goto finalize_step;
-    }
-    if ((opcode & 0xF8u) == 0x28u) { /* ADD A,Rn */
-        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
-        cpu_add_a_fast(cpu, cpu->iram[idx]);
-        goto finalize_step;
-    }
-    if ((opcode & 0xF8u) == 0x78u) { /* MOV Rn,#imm */
-        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
-        cpu->iram[idx] = cpu_fetch8(cpu);
-        goto finalize_step;
-    }
-    if ((opcode & 0xF8u) == 0x88u) { /* MOV direct,Rn */
-        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
-        uint8_t direct = cpu_fetch8(cpu);
-        cpu_write_direct(cpu, direct, cpu->iram[idx]);
-        goto finalize_step;
-    }
-    if ((opcode & 0xF8u) == 0xA8u) { /* MOV Rn,direct */
-        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
-        uint8_t direct = cpu_fetch8(cpu);
-        cpu->iram[idx] = cpu_read_direct(cpu, direct);
-        goto finalize_step;
-    }
-    if ((opcode & 0xF8u) == 0xD8u) { /* DJNZ Rn,rel */
-        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
-        int8_t rel = (int8_t)cpu_fetch8(cpu);
-        uint8_t value = (uint8_t)(cpu->iram[idx] - 1u);
-        cpu->iram[idx] = value;
-        if (value != 0u) {
-            cpu->pc = (uint16_t)(cpu->pc + rel);
-        }
-        goto finalize_step;
-    }
-    if ((opcode & 0xF8u) == 0xE8u) { /* MOV A,Rn */
-        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
-        cpu->acc = cpu->iram[idx];
-        goto finalize_step;
-    }
-    if ((opcode & 0xF8u) == 0xF8u) { /* MOV Rn,A */
-        uint8_t idx = (uint8_t)(cpu_reg_bank_base_fast(cpu) + (opcode & 0x07u));
-        cpu->iram[idx] = cpu->acc;
-        goto finalize_step;
-    }
-
-#if defined(__GNUC__) || defined(__clang__)
-#define X(op, mn, dst, src, size, cycles, name) [op] = &&LBL_##mn,
-    static void *const k_dispatch[256] = {
-        INSTR_LIST(X)
-    };
-#undef X
-
-    goto *k_dispatch[opcode];
-
-LBL_MN_INVALID:
-    cpu->halted = true;
-    cpu->halt_reason = "UNDEFINED";
-    goto finalize_step;
-
-LBL_MN_NOP:
-    exec_nop(cpu);
-    goto finalize_step;
-LBL_MN_MOV: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    op_t src = fetch_operand(cpu, src_mode, opcode);
-    exec_mov(cpu, dst, src);
-    goto finalize_step; }
-LBL_MN_MOV_DIRECT_DIRECT: {
-    op_t src = fetch_operand(cpu, AM_DIRECT, opcode);
-    op_t dst = fetch_operand(cpu, AM_DIRECT, opcode);
-    exec_mov_direct_direct(cpu, src, dst);
-    goto finalize_step; }
-LBL_MN_MOV_DPTR_IMM: {
-    uint16_t value = cpu_fetch16(cpu);
-    exec_mov_dptr_imm(cpu, value);
-    goto finalize_step; }
-LBL_MN_ADD: {
-    op_t src = fetch_operand(cpu, src_mode, opcode);
-    exec_add(cpu, src);
-    goto finalize_step; }
-LBL_MN_ADDC: {
-    op_t src = fetch_operand(cpu, src_mode, opcode);
-    exec_addc(cpu, src);
-    goto finalize_step; }
-LBL_MN_SUBB: {
-    op_t src = fetch_operand(cpu, src_mode, opcode);
-    exec_subb(cpu, src);
-    goto finalize_step; }
-LBL_MN_ANL: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    op_t src = fetch_operand(cpu, src_mode, opcode);
-    exec_anl(cpu, dst, src);
-    goto finalize_step; }
-LBL_MN_ORL: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    op_t src = fetch_operand(cpu, src_mode, opcode);
-    exec_orl(cpu, dst, src);
-    goto finalize_step; }
-LBL_MN_XRL: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    op_t src = fetch_operand(cpu, src_mode, opcode);
-    exec_xrl(cpu, dst, src);
-    goto finalize_step; }
-LBL_MN_DA:
-    exec_da(cpu);
-    goto finalize_step;
-LBL_MN_MUL:
-    exec_mul(cpu);
-    goto finalize_step;
-LBL_MN_DIV:
-    exec_div(cpu);
-    goto finalize_step;
-LBL_MN_RR:
-    exec_rr(cpu);
-    goto finalize_step;
-LBL_MN_RRC:
-    exec_rrc(cpu);
-    goto finalize_step;
-LBL_MN_RL:
-    exec_rl(cpu);
-    goto finalize_step;
-LBL_MN_RLC:
-    exec_rlc(cpu);
-    goto finalize_step;
-LBL_MN_SWAP:
-    exec_swap(cpu);
-    goto finalize_step;
-LBL_MN_INC: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    exec_inc(cpu, dst);
-    goto finalize_step; }
-LBL_MN_DEC: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    exec_dec(cpu, dst);
-    goto finalize_step; }
-LBL_MN_JC: {
-    op_t rel = fetch_operand(cpu, dst_mode, opcode);
-    exec_jc(cpu, rel);
-    goto finalize_step; }
-LBL_MN_JNC: {
-    op_t rel = fetch_operand(cpu, dst_mode, opcode);
-    exec_jnc(cpu, rel);
-    goto finalize_step; }
-LBL_MN_JZ: {
-    op_t rel = fetch_operand(cpu, dst_mode, opcode);
-    exec_jz(cpu, rel);
-    goto finalize_step; }
-LBL_MN_JNZ: {
-    op_t rel = fetch_operand(cpu, dst_mode, opcode);
-    exec_jnz(cpu, rel);
-    goto finalize_step; }
-LBL_MN_JB: {
-    op_t bit = fetch_operand(cpu, dst_mode, opcode);
-    op_t rel = fetch_operand(cpu, src_mode, opcode);
-    exec_jb(cpu, bit, rel);
-    goto finalize_step; }
-LBL_MN_JBC: {
-    op_t bit = fetch_operand(cpu, dst_mode, opcode);
-    op_t rel = fetch_operand(cpu, src_mode, opcode);
-    exec_jbc(cpu, bit, rel);
-    goto finalize_step; }
-LBL_MN_JNB: {
-    op_t bit = fetch_operand(cpu, dst_mode, opcode);
-    op_t rel = fetch_operand(cpu, src_mode, opcode);
-    exec_jnb(cpu, bit, rel);
-    goto finalize_step; }
-LBL_MN_DJNZ: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    op_t rel = fetch_operand(cpu, src_mode, opcode);
-    exec_djnz(cpu, dst, rel);
-    goto finalize_step; }
-LBL_MN_CJNE_A_IMM: {
-    op_t rhs = fetch_operand(cpu, AM_IMM8, opcode);
-    op_t rel = fetch_operand(cpu, AM_REL8, opcode);
-    exec_cjne(cpu, (op_t){ AM_A, 0 }, rhs, rel);
-    goto finalize_step; }
-LBL_MN_CJNE_A_DIRECT: {
-    op_t rhs = fetch_operand(cpu, AM_DIRECT, opcode);
-    op_t rel = fetch_operand(cpu, AM_REL8, opcode);
-    exec_cjne(cpu, (op_t){ AM_A, 0 }, rhs, rel);
-    goto finalize_step; }
-LBL_MN_CJNE_AT_RI_IMM: {
-    op_t lhs = fetch_operand(cpu, AM_AT_RI, opcode);
-    op_t rhs = fetch_operand(cpu, AM_IMM8, opcode);
-    op_t rel = fetch_operand(cpu, AM_REL8, opcode);
-    exec_cjne(cpu, lhs, rhs, rel);
-    goto finalize_step; }
-LBL_MN_CJNE_RN_IMM: {
-    op_t lhs = fetch_operand(cpu, AM_RN, opcode);
-    op_t rhs = fetch_operand(cpu, AM_IMM8, opcode);
-    op_t rel = fetch_operand(cpu, AM_REL8, opcode);
-    exec_cjne(cpu, lhs, rhs, rel);
-    goto finalize_step; }
-LBL_MN_JMPA_DPTR:
-    exec_jmpa_dptr(cpu);
-    goto finalize_step;
-LBL_MN_SJMP: {
-    op_t rel = fetch_operand(cpu, dst_mode, opcode);
-    exec_sjmp(cpu, rel);
-    goto finalize_step; }
-LBL_MN_AJMP: {
-    op_t addr11 = fetch_operand(cpu, dst_mode, opcode);
-    exec_ajmp(cpu, addr11);
-    goto finalize_step; }
-LBL_MN_ACALL: {
-    op_t addr11 = fetch_operand(cpu, dst_mode, opcode);
-    exec_acall(cpu, addr11);
-    goto finalize_step; }
-LBL_MN_LJMP: {
-    op_t addr16 = fetch_operand(cpu, dst_mode, opcode);
-    exec_ljmp(cpu, addr16);
-    goto finalize_step; }
-LBL_MN_LCALL: {
-    op_t addr16 = fetch_operand(cpu, dst_mode, opcode);
-    exec_lcall(cpu, addr16);
-    goto finalize_step; }
-LBL_MN_SETB: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    exec_setb(cpu, dst);
-    goto finalize_step; }
-LBL_MN_CLR: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    exec_clr(cpu, dst);
-    goto finalize_step; }
-LBL_MN_CPL: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    exec_cpl(cpu, dst);
-    goto finalize_step; }
-LBL_MN_MOVC_A_DPTR:
-    exec_movc_a_dptr(cpu);
-    goto finalize_step;
-LBL_MN_MOVC_A_PC:
-    exec_movc_a_pc(cpu);
-    goto finalize_step;
-LBL_MN_MOVX_A_DPTR:
-    exec_movx_a_dptr(cpu);
-    goto finalize_step;
-LBL_MN_MOVX_DPTR_A:
-    exec_movx_dptr_a(cpu);
-    goto finalize_step;
-LBL_MN_MOVX_A_AT_RI: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    exec_movx_a_at_ri(cpu, dst);
-    goto finalize_step; }
-LBL_MN_MOVX_AT_RI_A: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    exec_movx_at_ri_a(cpu, dst);
-    goto finalize_step; }
-LBL_MN_XCH: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    exec_xch(cpu, dst);
-    goto finalize_step; }
-LBL_MN_XCHD: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    exec_xchd(cpu, dst);
-    goto finalize_step; }
-LBL_MN_RET:
-    exec_ret(cpu);
-    goto finalize_step;
-LBL_MN_RETI:
-    exec_reti(cpu);
-    goto finalize_step;
-LBL_MN_PUSH: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    exec_push(cpu, dst);
-    goto finalize_step; }
-LBL_MN_POP: {
-    op_t dst = fetch_operand(cpu, dst_mode, opcode);
-    exec_pop(cpu, dst);
-    goto finalize_step; }
-#else
-    const instr_desc_t *desc = decode_ptr(opcode);
-    if (MCS51_UNLIKELY(desc->mnemonic == MN_INVALID)) {
-        cpu->halted = true;
-        cpu->halt_reason = "UNDEFINED";
-        goto finalize_step;
-    }
-#endif
-
-finalize_step:
-    if (!cpu->halted) {
-        if (cpu->acc != acc_before) {
-            cpu_update_parity(cpu);
+    if (cpu->acc != acc_before) {
+        uint8_t p = cpu->acc;
+        p ^= (uint8_t)(p >> 4);
+        p ^= (uint8_t)(p >> 2);
+        p ^= (uint8_t)(p >> 1);
+        if (p & 1u) {
+            cpu->psw |= PSW_P;
+        } else {
+            cpu->psw &= (uint8_t)~PSW_P;
         }
     }
+
+    if (cpu->trace_enabled && cpu->trace_fn) {
+        cpu->trace_fn(cpu, pc_before, opcode, NULL, cpu->trace_user);
+    }
+
     if (!cpu->halted) {
         cpu_check_interrupts(cpu);
     }
+
     return cpu->halted ? 0 : cycles;
 }
 

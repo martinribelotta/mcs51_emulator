@@ -96,6 +96,17 @@ static timers_t timers;
 static ports_t ports;
 
 typedef struct {
+    uint64_t samples;
+    uint64_t cpu_step_cycles;
+    uint64_t hook_cycles;
+    uint64_t timing_cycles;
+    uint64_t total_cycles;
+    uint64_t emu_cycles;
+} run_profile_t;
+
+static run_profile_t run_profile;
+
+typedef struct {
     bool active;
     uint8_t byte;
     uint8_t bit_index;
@@ -209,6 +220,31 @@ static void ports_write_stdout(uint8_t port, uint8_t level, uint8_t mask, void *
     fprintf(out, "P%u: level=0x%02X mask=0x%02X\n", port, level, mask);
 }
 
+static uint32_t prof_now_cycles(void *user)
+{
+    (void)user;
+    return (uint32_t)clock();
+}
+
+static void prof_on_sample(uint32_t step_cycles,
+                           uint32_t hook_cycles,
+                           uint32_t timing_cycles,
+                           uint32_t total_cycles,
+                           uint8_t emu_cycles,
+                           void *user)
+{
+    run_profile_t *profile = (run_profile_t *)user;
+    if (!profile) {
+        return;
+    }
+    profile->samples++;
+    profile->cpu_step_cycles += (uint64_t)step_cycles;
+    profile->hook_cycles += (uint64_t)hook_cycles;
+    profile->timing_cycles += (uint64_t)timing_cycles;
+    profile->total_cycles += (uint64_t)total_cycles;
+    profile->emu_cycles += (uint64_t)emu_cycles;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
@@ -249,10 +285,19 @@ int main(int argc, char **argv)
         }
     }
 
+    memset(&run_profile, 0, sizeof(run_profile));
+    cpu_run_timed_profiler_t profiler = {
+        .read_cycles = prof_now_cycles,
+        .on_sample = prof_on_sample,
+        .user = &run_profile,
+    };
+    cpu_set_run_timed_profiler(&profiler);
+
     timing_reset(&timing_state);
     uint64_t wall_start_ns = posix_now_ns(NULL);
     uint64_t steps = cpu_run_timed(&cpu, max_steps, &timing_cfg, &timing_state, &time_iface);
     uint64_t wall_end_ns = posix_now_ns(NULL);
+    cpu_set_run_timed_profiler(NULL);
     uint64_t wall_elapsed_ns = wall_end_ns - wall_start_ns;
     uint64_t emu_elapsed_ns = timing_cycles_to_ns(&timing_cfg, timing_state.cycles_total);
 
@@ -271,6 +316,23 @@ int main(int argc, char **argv)
         printf("Metrics: steps=%llu wall<1us emu=%llu ns\n",
                (unsigned long long)steps,
                (unsigned long long)emu_elapsed_ns);
+    }
+
+    if (run_profile.samples > 0) {
+        double avg_cpu_step = (double)run_profile.cpu_step_cycles / (double)run_profile.samples;
+        double avg_hooks = (double)run_profile.hook_cycles / (double)run_profile.samples;
+        double avg_timing = (double)run_profile.timing_cycles / (double)run_profile.samples;
+        double avg_total = (double)run_profile.total_cycles / (double)run_profile.samples;
+        double step_pct = run_profile.total_cycles
+                              ? (100.0 * (double)run_profile.cpu_step_cycles / (double)run_profile.total_cycles)
+                              : 0.0;
+        printf("Profile: cpu-step=%.1f cyc (%.1f%%) hooks=%.1f timing=%.1f total=%.1f emu-cycles=%llu\n",
+               avg_cpu_step,
+               step_pct,
+               avg_hooks,
+               avg_timing,
+               avg_total,
+               (unsigned long long)run_profile.emu_cycles);
     }
 
     if (cpu.halted) {
